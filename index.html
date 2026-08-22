@@ -61,10 +61,16 @@
 
     <script>
         let game;
-        try { game = new Chess(); } catch(e) { alert("체스 엔진 로딩 실패."); }
+        let fullGame; // [핵심] 오프닝 이름 추적용 '숨겨진 전체 보드'
+        try { 
+            game = new Chess(); 
+            fullGame = new Chess();
+        } catch(e) { 
+            alert("체스 엔진 로딩 실패."); 
+        }
         
         let combinedTree = {};
-        let optimizedEcoDict = {}; // [최적화] O(1) 해시맵 딕셔너리
+        let optimizedEcoDict = {}; 
         let userColor = 'w';
         let isFlipped = false;
         let selectedSquare = null;
@@ -87,12 +93,26 @@
             return fen;
         }
 
+        // [핵심] 저장된 초기 수순(예: "1. g3")을 파싱하여 숨겨진 보드를 똑같이 세팅하는 함수
+        function syncFullGame() {
+            fullGame.reset();
+            if (globalPosName && globalPosName !== "Starting Position") {
+                let tokens = globalPosName.split(/\s+/);
+                for (let t of tokens) {
+                    // "1." 같은 턴수 표기 제거 후 순수 기보(SAN)만 추출하여 둠
+                    let san = t.replace(/^\d+\.+/, "");
+                    if (san) {
+                        try { fullGame.move(san); } catch(e) {}
+                    }
+                }
+            }
+        }
+
         async function loadData() {
             try {
-                // [최적화] 정규식이 끝난 가벼운 optimized_eco.json을 동시 호출
                 const [libRes, ecoRes] = await Promise.all([
                     fetch('library_data.json'),
-                    fetch('optimized_eco.json') // 새로 만든 최적화 사전
+                    fetch('optimized_eco.json') 
                 ]);
                 const libData = await libRes.json();
                 optimizedEcoDict = await ecoRes.json();
@@ -121,7 +141,10 @@
                 }
                 
                 document.getElementById('loading').style.display = 'none';
+                
                 game.load(globalStartFen);
+                syncFullGame(); // 화면 로드 시 숨겨진 보드도 세팅
+                
                 createTouchGrid();
                 updateUI();
             } catch (e) {
@@ -151,7 +174,9 @@
         function startGame(color) {
             userColor = color;
             isFlipped = (color === 'b');
+            
             game.load(globalStartFen);
+            syncFullGame(); // 연습을 재시작할 때마다 숨겨진 보드 동기화
             
             selectedSquare = null;
             lastMove = null;
@@ -194,6 +219,8 @@
 
                     if (combinedTree[fenBefore] && combinedTree[fenBefore][sanMove]) {
                         game.move(moveObj);
+                        fullGame.move(sanMove); // [추가] 숨겨진 보드에도 수순 적용!
+                        
                         lastMove = moveObj;
                         selectedSquare = null;
                         
@@ -238,6 +265,7 @@
 
             let randomSan = possibleSans[Math.floor(Math.random() * possibleSans.length)];
             let moveObj = game.move(randomSan);
+            fullGame.move(randomSan); // [추가] 숨겨진 보드에도 컴퓨터의 수순 적용!
 
             lastMove = moveObj;
             playSound(moveObj.captured ? 'capture' : 'move');
@@ -323,7 +351,8 @@
                 document.getElementById('status-msg').style.color = "#a0d959";
             }
 
-            let history = game.history();
+            // [변경] 불완전한 game 대신, 첫 수부터 기록된 fullGame의 기록을 뽑아옵니다.
+            let history = fullGame.history(); 
             let seq = [];
             for (let i = 0; i < history.length; i++) {
                 if (i % 2 === 0) seq.push(`${(i/2)+1}. ${history[i]}`);
@@ -331,15 +360,13 @@
             }
             let currentSeqStr = seq.join(" ");
 
-            let bestMatchName = globalPosName;
+            let bestMatchName = globalPosName; // 기본값은 library_data에서 가져온 이름 유지
 
-            // [최적화] 수만 개 루프를 돌지 않고, 현재 수순 배열을 한 조각씩 더해가며 해시맵에 찔러봅니다. (속도 O(1), 최대 30번 반복)
             if (currentSeqStr !== "") {
                 let moveArr = currentSeqStr.split(" ");
                 let testSeq = "";
                 for (let i = 0; i < moveArr.length; i++) {
                     testSeq += (i > 0 ? " " : "") + moveArr[i];
-                    // 해시맵 즉각 참조!
                     if (optimizedEcoDict[testSeq]) {
                         let eco = optimizedEcoDict[testSeq][0];
                         let name = optimizedEcoDict[testSeq][1];
