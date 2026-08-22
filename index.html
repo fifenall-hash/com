@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Chess Opening Quiz</title>
+    <!-- PWA 설정을 위한 manifest 연동 -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icon.ico">
+    <link rel="apple-touch-icon" href="images/icon.png">
+    <meta name="theme-color" content="#262421">
+    
+    <!-- chess.js 라이브러리 (체스 규칙 및 FEN 생성 처리) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+
+    <style>
+        * { box-sizing: border-box; user-select: none; }
+        body { margin: 0; padding: 0; background-color: #262421; color: #dcdcdc; font-family: 'Noto Sans KR', sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        
+        #header { padding: 15px; text-align: center; background-color: #302e2b; border-bottom: 2px solid #4e623b; }
+        #opening-name { font-size: 16px; font-weight: bold; color: #f1c40f; min-height: 24px; }
+        #status-msg { font-size: 14px; margin-top: 5px; color: #a0d959; }
+
+        #board-wrapper { width: 100%; max-width: 600px; margin: 20px auto; position: relative; aspect-ratio: 1/1; background-image: url('images/3dboard.png'); background-size: 100% 100%; }
+        
+        .piece, .highlight { position: absolute; background-size: 100% 100%; transition: left 0.15s linear, top 0.15s linear; pointer-events: none; }
+        /* 피스 크기는 보드 대비 너비 12.5%, 높이 22.7272%(160/704) */
+        .piece { width: 12.5%; height: 22.7272%; }
+        /* 하이라이트 크기는 바닥 1칸 너비 12.5%, 높이 11.3636%(80/704) */
+        .highlight { width: 12.5%; height: 11.3636%; opacity: 0.5; z-index: 0; }
+        
+        #controls { text-align: center; margin-top: auto; padding: 20px; background-color: #302e2b; }
+        button { background-color: #3498db; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 8px; font-weight: bold; cursor: pointer; margin: 0 5px; }
+        button:active { background-color: #2980b9; }
+        .btn-black { background-color: #8e44ad; }
+        .btn-black:active { background-color: #732d91; }
+
+        /* 터치 이벤트를 받기 위한 투명 그리드 레이어 */
+        #touch-grid { position: absolute; top: 9.0909%; left: 0; width: 100%; height: 90.909%; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); z-index: 100; }
+        .touch-square { width: 100%; height: 100%; }
+        
+        #loading { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #262421; color: white; display: flex; align-items: center; justify-content: center; z-index: 999; font-size: 20px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="loading">데이터 불러오는 중...</div>
+
+    <div id="header">
+        <div id="opening-name">Starting Position</div>
+        <div id="status-msg">원하는 색상을 선택해 퀴즈를 시작하세요!</div>
+    </div>
+
+    <div id="board-wrapper">
+        <div id="pieces-container"></div>
+        <div id="highlights-container"></div>
+        <div id="touch-grid"></div>
+    </div>
+
+    <div id="controls">
+        <button onclick="startGame('w')">백으로 연습</button>
+        <button class="btn-black" onclick="startGame('b')">흑으로 연습</button>
+    </div>
+
+    <script>
+        let game = new Chess();
+        let combinedTree = {};
+        let ecoDict = {};
+        let userColor = 'w';
+        let isFlipped = false;
+        let selectedSquare = null;
+        let lastMove = null;
+        let isWaitingForComputer = false;
+
+        const sndMove = new Audio('sounds/sound_move.wav');
+        const sndCapture = new Audio('sounds/sound_capture.wav');
+        const sndError = new Audio('sounds/sound_capture.wav');
+
+        // 초기 데이터 로드 (library_data.json과 eco.json 병합)
+        async function loadData() {
+            try {
+                const [libRes, ecoRes] = await Promise.all([
+                    fetch('library_data.json'),
+                    fetch('eco.json')
+                ]);
+                const libData = await libRes.json();
+                ecoDict = await ecoRes.json();
+
+                for (let folderKey in libData.tree) {
+                    let fens = libData.tree[folderKey];
+                    for (let fen in fens) {
+                        if (!combinedTree[fen]) combinedTree[fen] = {};
+                        for (let san in fens[fen]) {
+                            combinedTree[fen][san] = true;
+                        }
+                    }
+                }
+                document.getElementById('loading').style.display = 'none';
+                renderBoard();
+            } catch (e) {
+                document.getElementById('loading').innerText = "데이터 로딩 실패! (오프라인 상태인지 확인하세요)";
+            }
+        }
+
+        function createTouchGrid() {
+            const grid = document.getElementById('touch-grid');
+            grid.innerHTML = '';
+            for (let row = 0; row < 8; row++) {
+                for (let col = 0; col < 8; col++) {
+                    let sqDiv = document.createElement('div');
+                    sqDiv.className = 'touch-square';
+                    
+                    let file = isFlipped ? 7 - col : col;
+                    let rank = isFlipped ? row : 7 - row;
+                    let sq = String.fromCharCode(97 + file) + (rank + 1);
+                    
+                    sqDiv.dataset.sq = sq;
+                    sqDiv.addEventListener('click', () => handleSquareClick(sq));
+                    grid.appendChild(sqDiv);
+                }
+            }
+        }
+
+        function startGame(color) {
+            userColor = color;
+            isFlipped = (color === 'b');
+            game.reset();
+            selectedSquare = null;
+            lastMove = null;
+            isWaitingForComputer = false;
+            
+            createTouchGrid();
+            updateUI();
+
+            if (color === 'b') {
+                isWaitingForComputer = true;
+                setTimeout(makeComputerMove, 400);
+            }
+        }
+
+        function handleSquareClick(sq) {
+            if (isWaitingForComputer || game.game_over()) return;
+
+            let piece = game.get(sq);
+
+            if (selectedSquare === null) {
+                if (piece && piece.color === userColor) {
+                    selectedSquare = sq;
+                    renderBoard();
+                }
+            } else if (selectedSquare === sq) {
+                selectedSquare = null;
+                renderBoard();
+            } else {
+                let moves = game.moves({ verbose: true });
+                let moveObj = moves.find(m => m.from === selectedSquare && m.to === sq);
+                
+                if(!moveObj && piece && piece.type === 'p' && (sq[1] === '1' || sq[1] === '8')) {
+                    moveObj = moves.find(m => m.from === selectedSquare && m.to === sq && m.promotion === 'q');
+                }
+
+                if (moveObj) {
+                    let fenBefore = game.fen();
+                    let sanMove = moveObj.san;
+
+                    if (combinedTree[fenBefore] && combinedTree[fenBefore][sanMove]) {
+                        game.move(moveObj);
+                        lastMove = moveObj;
+                        selectedSquare = null;
+                        
+                        playSound(moveObj.captured ? 'capture' : 'move');
+                        updateUI();
+                        
+                        let newFen = game.fen();
+                        if (combinedTree[newFen] && Object.keys(combinedTree[newFen]).length > 0) {
+                            isWaitingForComputer = true;
+                            document.getElementById('status-msg').innerText = "정답! (컴퓨터의 응수를 기다립니다...)";
+                            document.getElementById('status-msg').style.color = "#a0d959";
+                            setTimeout(makeComputerMove, 600);
+                        } else {
+                            document.getElementById('status-msg').innerText = "🎉 준비된 오프닝 라인 연습을 완수했습니다!";
+                            document.getElementById('status-msg').style.color = "#3498db";
+                        }
+                    } else {
+                        selectedSquare = null;
+                        renderBoard();
+                        sndError.play();
+                        document.getElementById('status-msg').innerText = `❌ 틀렸습니다! (${sanMove}는 지정된 라인이 아님)`;
+                        document.getElementById('status-msg').style.color = "#e74c3c";
+                    }
+                } else {
+                    if (piece && piece.color === userColor) {
+                        selectedSquare = sq;
+                        renderBoard();
+                    } else {
+                        selectedSquare = null;
+                        renderBoard();
+                    }
+                }
+            }
+        }
+
+        function makeComputerMove() {
+            let currentFen = game.fen();
+            if (!combinedTree[currentFen]) return;
+
+            let possibleSans = Object.keys(combinedTree[currentFen]);
+            if (possibleSans.length === 0) return;
+
+            let randomSan = possibleSans[Math.floor(Math.random() * possibleSans.length)];
+            let moveObj = game.move(randomSan);
+
+            lastMove = moveObj;
+            playSound(moveObj.captured ? 'capture' : 'move');
+            
+            isWaitingForComputer = false;
+            updateUI();
+        }
+
+        function playSound(type) {
+            try {
+                if (type === 'capture') { sndCapture.currentTime = 0; sndCapture.play(); }
+                else { sndMove.currentTime = 0; sndMove.play(); }
+            } catch(e) {}
+        }
+
+        function renderBoard() {
+            const pCont = document.getElementById('pieces-container');
+            const hCont = document.getElementById('highlights-container');
+            pCont.innerHTML = '';
+            hCont.innerHTML = '';
+
+            let boardHtml = '';
+            let hlHtml = '';
+
+            if (lastMove) {
+                hlHtml += getHighlightHTML(lastMove.from, "#f39c12");
+                hlHtml += getHighlightHTML(lastMove.to, "#f39c12");
+            }
+            if (selectedSquare) {
+                hlHtml += getHighlightHTML(selectedSquare, "#27ae60");
+            }
+
+            for (let screenRow = 0; screenRow < 8; screenRow++) {
+                for (let screenCol = 0; screenCol < 8; screenCol++) {
+                    let rank = isFlipped ? screenRow : 7 - screenRow;
+                    let file = isFlipped ? 7 - screenCol : screenCol;
+                    let sq = String.fromCharCode(97 + file) + (rank + 1);
+                    
+                    let piece = game.get(sq);
+                    if (piece) {
+                        let c = piece.color;
+                        let sym = piece.type;
+                        let imgName = `3d${c}${sym}.png`;
+                        
+                        if (isFlipped && sym === 'n') {
+                            imgName = `3d${c}nr.png`;
+                        }
+
+                        let leftPct = screenCol * 12.5;
+                        let topPct = 9.0909 + (screenRow * 11.3636) - 11.3636;
+                        let zIndex = screenRow + 10;
+
+                        boardHtml += `<div class="piece" style="left: ${leftPct}%; top: ${topPct}%; z-index: ${zIndex}; background-image: url('images/${imgName}');"></div>`;
+                    }
+                }
+            }
+
+            pCont.innerHTML = boardHtml;
+            hCont.innerHTML = hlHtml;
+        }
+
+        function getHighlightHTML(sq, color) {
+            let file = sq.charCodeAt(0) - 97;
+            let rank = parseInt(sq[1]) - 1;
+            
+            let screenCol = isFlipped ? 7 - file : file;
+            let screenRow = isFlipped ? rank : 7 - rank;
+            
+            let leftPct = screenCol * 12.5;
+            let topPct = 9.0909 + (screenRow * 11.3636);
+
+            return `<div class="highlight" style="left: ${leftPct}%; top: ${topPct}%; background-color: ${color};"></div>`;
+        }
+
+        function updateUI() {
+            renderBoard();
+            
+            if (isWaitingForComputer) {
+                document.getElementById('status-msg').innerText = "컴퓨터가 응수하는 중...";
+                document.getElementById('status-msg').style.color = "#a0d959";
+            } else if (!game.game_over()) {
+                document.getElementById('status-msg').innerText = "당신의 차례입니다. 올바른 오프닝 수를 두세요.";
+                document.getElementById('status-msg').style.color = "#a0d959";
+            }
+
+            let history = game.history();
+            let seq = [];
+            for (let i = 0; i < history.length; i++) {
+                if (i % 2 === 0) seq.push(`${(i/2)+1}. ${history[i]}`);
+                else seq[seq.length-1] += ` ${history[i]}`;
+            }
+            let currentSeqStr = seq.join(" ");
+
+            let bestMatchName = "Starting Position";
+            let bestMatchLen = -1;
+
+            for (let moves in ecoDict) {
+                if (currentSeqStr === moves || currentSeqStr.startsWith(moves + " ")) {
+                    if (moves.length > bestMatchLen) {
+                        bestMatchLen = moves.length;
+                        let eco = ecoDict[moves].eco;
+                        let name = ecoDict[moves].name;
+                        name = name.split(",").map(p => p.trim()).filter(p => !/\b\d+\./.test(p) && !/\b[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8]/.test(p)).join(", ");
+                        bestMatchName = `[${eco} ${name}]`;
+                    }
+                }
+            }
+            document.getElementById('opening-name').innerText = bestMatchName;
+        }
+
+        loadData();
+    </script>
+
+    <!-- 서비스 워커 등록 스크립트 -->
+    <script>
+        if ('serviceWorker' in navigator) { 
+            navigator.serviceWorker.register('sw.js'); 
+        }
+    </script>
+</body>
+</html>
