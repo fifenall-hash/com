@@ -15,27 +15,26 @@
 
     <style>
         * { box-sizing: border-box; user-select: none; }
-        body { margin: 0; padding: 0; background-color: #262421; color: #dcdcdc; font-family: 'Noto Sans KR', sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        /* [수정] 모바일 뷰를 위해 화면을 억지로 고정하던 속성 제거하고 자연스럽게 흐르도록 변경 */
+        body { margin: 0; padding: 0; background-color: #262421; color: #dcdcdc; font-family: 'Noto Sans KR', sans-serif; }
         
         #header { padding: 15px; text-align: center; background-color: #302e2b; border-bottom: 2px solid #4e623b; }
         #opening-name { font-size: 16px; font-weight: bold; color: #f1c40f; min-height: 24px; }
         #status-msg { font-size: 14px; margin-top: 5px; color: #a0d959; }
 
-        #board-wrapper { width: 100%; max-width: 600px; margin: 20px auto; position: relative; aspect-ratio: 1/1; background-image: url('images/3dboard.png'); background-size: 100% 100%; }
+        #board-wrapper { width: 100%; max-width: 600px; margin: 20px auto 10px auto; position: relative; aspect-ratio: 1/1; background-image: url('images/3dboard.png'); background-size: 100% 100%; }
         
         .piece, .highlight { position: absolute; background-size: 100% 100%; transition: left 0.15s linear, top 0.15s linear; pointer-events: none; }
-        /* 피스 크기는 보드 대비 너비 12.5%, 높이 22.7272%(160/704) */
         .piece { width: 12.5%; height: 22.7272%; }
-        /* 하이라이트 크기는 바닥 1칸 너비 12.5%, 높이 11.3636%(80/704) */
         .highlight { width: 12.5%; height: 11.3636%; opacity: 0.5; z-index: 0; }
         
-        #controls { text-align: center; margin-top: auto; padding: 20px; background-color: #302e2b; }
+        /* [수정] 컨트롤 버튼 영역이 보드 바로 아래에 붙도록 수정 */
+        #controls { text-align: center; padding: 15px; background-color: #262421; }
         button { background-color: #3498db; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 8px; font-weight: bold; cursor: pointer; margin: 0 5px; }
         button:active { background-color: #2980b9; }
         .btn-black { background-color: #8e44ad; }
         .btn-black:active { background-color: #732d91; }
 
-        /* 터치 이벤트를 받기 위한 투명 그리드 레이어 */
         #touch-grid { position: absolute; top: 9.0909%; left: 0; width: 100%; height: 90.909%; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); z-index: 100; }
         .touch-square { width: 100%; height: 100%; }
         
@@ -71,12 +70,20 @@
         let selectedSquare = null;
         let lastMove = null;
         let isWaitingForComputer = false;
+        
+        // [신규] 기본 오프닝 이름과 시작 FEN을 저장할 전역 변수
+        let globalStartFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let globalPosName = "Starting Position";
 
         const sndMove = new Audio('sounds/sound_move.wav');
         const sndCapture = new Audio('sounds/sound_capture.wav');
         const sndError = new Audio('sounds/sound_capture.wav');
 
-        // 초기 데이터 로드 (library_data.json과 eco.json 병합)
+        // [신규] FEN 문자열에서 뒤쪽 턴수(Halfmove clock 등)를 제외하고 '기물 배치와 차례' 핵심만 잘라내는 함수
+        function getBaseFen(fen) {
+            return fen.split(' ').slice(0, 4).join(' ');
+        }
+
         async function loadData() {
             try {
                 const [libRes, ecoRes] = await Promise.all([
@@ -86,17 +93,36 @@
                 const libData = await libRes.json();
                 ecoDict = await ecoRes.json();
 
-                for (let folderKey in libData.tree) {
-                    let fens = libData.tree[folderKey];
-                    for (let fen in fens) {
-                        if (!combinedTree[fen]) combinedTree[fen] = {};
-                        for (let san in fens[fen]) {
-                            combinedTree[fen][san] = true;
+                // 1. 자료에서 시작 국면(start_fen) 추출
+                if (libData.folders) {
+                    for (let fk in libData.folders) {
+                        if (libData.folders[fk].start_fen) {
+                            globalStartFen = libData.folders[fk].start_fen;
+                            if (libData.folders[fk].metadata && libData.folders[fk].metadata.pos_name) {
+                                globalPosName = libData.folders[fk].metadata.pos_name;
+                            }
+                            break; // 첫 번째 폴더의 시작 국면을 기본으로 채택
                         }
                     }
                 }
+
+                // 2. 통합 트리 구축 (getBaseFen 적용)
+                for (let folderKey in libData.tree) {
+                    let fens = libData.tree[folderKey];
+                    for (let fen in fens) {
+                        let baseFen = getBaseFen(fen);
+                        if (!combinedTree[baseFen]) combinedTree[baseFen] = {};
+                        for (let san in fens[fen]) {
+                            combinedTree[baseFen][san] = true;
+                        }
+                    }
+                }
+                
                 document.getElementById('loading').style.display = 'none';
-                renderBoard();
+                
+                // 앱을 켰을 때도 해당 시작 지점을 보여줌
+                game.load(globalStartFen);
+                updateUI();
             } catch (e) {
                 document.getElementById('loading').innerText = "데이터 로딩 실패! (오프라인 상태인지 확인하세요)";
             }
@@ -124,7 +150,10 @@
         function startGame(color) {
             userColor = color;
             isFlipped = (color === 'b');
-            game.reset();
+            
+            // [수정] 무조건 reset()하지 않고 추출해둔 시작 국면(FEN)으로 로드합니다.
+            game.load(globalStartFen);
+            
             selectedSquare = null;
             lastMove = null;
             isWaitingForComputer = false;
@@ -132,7 +161,9 @@
             createTouchGrid();
             updateUI();
 
-            if (color === 'b') {
+            // [수정] 무조건 흑일 때만 컴퓨터가 두는 게 아니라, 보드의 현재 차례와 유저의 차례를 비교하여 컴퓨터 동작 결정
+            let currentTurn = game.turn();
+            if (userColor !== currentTurn) {
                 isWaitingForComputer = true;
                 setTimeout(makeComputerMove, 400);
             }
@@ -160,7 +191,7 @@
                 }
 
                 if (moveObj) {
-                    let fenBefore = game.fen();
+                    let fenBefore = getBaseFen(game.fen());
                     let sanMove = moveObj.san;
 
                     if (combinedTree[fenBefore] && combinedTree[fenBefore][sanMove]) {
@@ -171,7 +202,7 @@
                         playSound(moveObj.captured ? 'capture' : 'move');
                         updateUI();
                         
-                        let newFen = game.fen();
+                        let newFen = getBaseFen(game.fen());
                         if (combinedTree[newFen] && Object.keys(combinedTree[newFen]).length > 0) {
                             isWaitingForComputer = true;
                             document.getElementById('status-msg').innerText = "정답! (컴퓨터의 응수를 기다립니다...)";
@@ -201,7 +232,7 @@
         }
 
         function makeComputerMove() {
-            let currentFen = game.fen();
+            let currentFen = getBaseFen(game.fen());
             if (!combinedTree[currentFen]) return;
 
             let possibleSans = Object.keys(combinedTree[currentFen]);
@@ -302,24 +333,25 @@
             }
             let currentSeqStr = seq.join(" ");
 
-            let bestMatchName = "Starting Position";
+            let bestMatchName = globalPosName; // 초기에는 저장된 이름을 따름
             let bestMatchLen = -1;
 
-            for (let moves in ecoDict) {
-                if (currentSeqStr === moves || currentSeqStr.startsWith(moves + " ")) {
-                    if (moves.length > bestMatchLen) {
-                        bestMatchLen = moves.length;
-                        let eco = ecoDict[moves].eco;
-                        let name = ecoDict[moves].name;
-                        name = name.split(",").map(p => p.trim()).filter(p => !/\b\d+\./.test(p) && !/\b[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8]/.test(p)).join(", ");
-                        bestMatchName = `[${eco} ${name}]`;
+            if (currentSeqStr !== "") {
+                for (let moves in ecoDict) {
+                    if (currentSeqStr === moves || currentSeqStr.startsWith(moves + " ")) {
+                        if (moves.length > bestMatchLen) {
+                            bestMatchLen = moves.length;
+                            let eco = ecoDict[moves].eco;
+                            let name = ecoDict[moves].name;
+                            name = name.split(",").map(p => p.trim()).filter(p => !/\b\d+\./.test(p) && !/\b[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8]/.test(p)).join(", ");
+                            bestMatchName = `[${eco} ${name}]`;
+                        }
                     }
                 }
             }
             document.getElementById('opening-name').innerText = bestMatchName;
         }
 
-        loadData();
     </script>
 
     <!-- 서비스 워커 등록 스크립트 -->
