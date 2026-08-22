@@ -2,36 +2,29 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <!-- 화면 비율 강제 고정 (모바일에서 줌인 방지) -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Chess Opening Quiz</title>
-    <!-- PWA 설정을 위한 manifest 연동 -->
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icon.ico">
     <link rel="apple-touch-icon" href="images/icon.png">
     <meta name="theme-color" content="#262421">
     
-    <!-- chess.js 라이브러리 (체스 규칙 및 FEN 생성 처리) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
 
     <style>
         * { box-sizing: border-box; user-select: none; }
-        
-        /* [수정] 모바일 화면에서 버튼이 짤리지 않게 자연스러운 세로 스크롤 허용 */
         body { margin: 0; padding: 0; background-color: #262421; color: #dcdcdc; font-family: 'Noto Sans KR', sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
         
         #header { width: 100%; padding: 15px; text-align: center; background-color: #302e2b; border-bottom: 2px solid #4e623b; }
         #opening-name { font-size: 16px; font-weight: bold; color: #f1c40f; min-height: 24px; }
         #status-msg { font-size: 14px; margin-top: 5px; color: #a0d959; }
 
-        /* [수정] 체스판 여백 최소화하여 버튼과 밀착 */
         #board-wrapper { width: 100%; max-width: 600px; margin: 15px 0 10px 0; position: relative; aspect-ratio: 1/1; background-image: url('images/3dboard.png'); background-size: 100% 100%; }
         
         .piece, .highlight { position: absolute; background-size: 100% 100%; transition: left 0.15s linear, top 0.15s linear; pointer-events: none; }
         .piece { width: 12.5%; height: 22.7272%; }
         .highlight { width: 12.5%; height: 11.3636%; opacity: 0.5; z-index: 0; }
         
-        /* [수정] 체스판 바로 아래에 버튼 그룹 위치 */
         #controls { width: 100%; text-align: center; padding: 10px; margin-bottom: 20px; }
         button { background-color: #3498db; color: white; border: none; padding: 14px 24px; font-size: 16px; border-radius: 8px; font-weight: bold; cursor: pointer; margin: 0 5px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         button:active { background-color: #2980b9; transform: translateY(2px); box-shadow: 0 2px 3px rgba(0,0,0,0.3); }
@@ -42,14 +35,12 @@
         .touch-square { width: 100%; height: 100%; }
         
         #loading { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #262421; color: white; display: flex; align-items: center; justify-content: center; z-index: 999; font-size: 18px; font-weight: bold; flex-direction: column; }
-        .spinner { margin-top: 15px; font-size: 14px; color: #a0d959; }
     </style>
 </head>
 <body>
 
     <div id="loading">
-        <div id="loading-text">데이터베이스 접속 중...</div>
-        <div class="spinner">이 작업은 최초 1회만 조금 오래 걸립니다</div>
+        <div id="loading-text">최적화된 라이브러리 불러오는 중...</div>
     </div>
 
     <div id="header">
@@ -70,17 +61,16 @@
 
     <script>
         let game;
-        try { game = new Chess(); } catch(e) { alert("체스 엔진 로딩 실패. 인터넷 연결을 확인해주세요."); }
+        try { game = new Chess(); } catch(e) { alert("체스 엔진 로딩 실패."); }
         
         let combinedTree = {};
-        let optimizedEcoList = []; // [속도 최적화] 전처리된 오프닝 이름 캐시
+        let optimizedEcoDict = {}; // [최적화] O(1) 해시맵 딕셔너리
         let userColor = 'w';
         let isFlipped = false;
         let selectedSquare = null;
         let lastMove = null;
         let isWaitingForComputer = false;
         
-        // [복구 완료] 저장된 초기 상태(예: g3)를 기억할 전역 변수
         let globalStartFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let globalPosName = "Starting Position";
 
@@ -88,7 +78,6 @@
         const sndCapture = new Audio('sounds/sound_capture.wav');
         const sndError = new Audio('sounds/sound_capture.wav');
 
-        // [속도 최적화] 메모리 및 연산 낭비를 막는 초고속 FEN 파싱
         function getBaseFen(fen) {
             let spaces = 0;
             for(let i=0; i<fen.length; i++) {
@@ -100,16 +89,14 @@
 
         async function loadData() {
             try {
-                const loadTxt = document.getElementById('loading-text');
-                loadTxt.innerText = "라이브러리(기보) 다운로드 중...";
-
-                // [속도 최적화] 무거운 eco.json을 빼고, 핵심 게임 파일만 먼저 동기적으로 받음
-                const libRes = await fetch('library_data.json');
+                // [최적화] 정규식이 끝난 가벼운 optimized_eco.json을 동시 호출
+                const [libRes, ecoRes] = await Promise.all([
+                    fetch('library_data.json'),
+                    fetch('optimized_eco.json') // 새로 만든 최적화 사전
+                ]);
                 const libData = await libRes.json();
+                optimizedEcoDict = await ecoRes.json();
 
-                loadTxt.innerText = "데이터 압축 해제 및 보드 생성 중...";
-
-                // 1. 자료에서 시작 국면(start_fen) 추출 복구
                 if (libData.folders) {
                     for (let fk in libData.folders) {
                         if (libData.folders[fk].start_fen) {
@@ -122,7 +109,6 @@
                     }
                 }
 
-                // 2. 통합 트리 구축
                 for (let folderKey in libData.tree) {
                     let fens = libData.tree[folderKey];
                     for (let fen in fens) {
@@ -134,32 +120,10 @@
                     }
                 }
                 
-                // 로딩 창 끄기 및 즉시 게임 시작!
                 document.getElementById('loading').style.display = 'none';
                 game.load(globalStartFen);
                 createTouchGrid();
                 updateUI();
-
-                // [핵심] 가장 무거운 오프닝 이름 사전(eco.json)은 뒷배경에서 렉 없이 비동기 로드
-                fetch('eco.json').then(r => r.json()).then(rawEco => {
-                    for (let k in rawEco) {
-                        let details = rawEco[k];
-                        if (details.moves && details.name) {
-                            let cleanName = details.name.split(",").map(p => p.trim()).filter(p => !/\b\d+\./.test(p) && !/\b[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8]/.test(p)).join(", ");
-                            if (!cleanName) cleanName = details.name;
-                            optimizedEcoList.push({
-                                seq: details.moves,
-                                len: details.moves.length,
-                                eco: details.eco,
-                                name: cleanName
-                            });
-                        }
-                    }
-                    // 가장 긴(구체적인) 수순부터 매칭되도록 길이순 정렬
-                    optimizedEcoList.sort((a, b) => b.len - a.len);
-                    updateUI(); // 뒷배경에서 로딩 완료되면 오프닝 이름만 새로고침
-                }).catch(e => console.log("ECO 사전 로드 생략됨"));
-
             } catch (e) {
                 document.getElementById('loading').innerHTML = "데이터 로딩 실패!<br><br><span style='font-size:14px;color:#e74c3c;'>인터넷 상태 확인 후 새로고침 하세요.</span>";
             }
@@ -187,8 +151,6 @@
         function startGame(color) {
             userColor = color;
             isFlipped = (color === 'b');
-            
-            // [복구 완료] 무조건 초기화(reset)가 아닌 추출된 FEN으로 시작!
             game.load(globalStartFen);
             
             selectedSquare = null;
@@ -198,7 +160,6 @@
             createTouchGrid();
             updateUI();
 
-            // [복구 완료] 세팅된 보드의 현재 차례가 내 색상과 다르면 컴퓨터가 먼저 시작함!
             let currentTurn = game.turn();
             if (userColor !== currentTurn) {
                 isWaitingForComputer = true;
@@ -372,24 +333,26 @@
 
             let bestMatchName = globalPosName;
 
-            // [속도 최적화] 전처리된 배열을 활용하여 모바일 프리징(렉) 완벽 방지
-            if (currentSeqStr !== "" && optimizedEcoList.length > 0) {
-                for (let i = 0; i < optimizedEcoList.length; i++) {
-                    let ecoItem = optimizedEcoList[i];
-                    if (currentSeqStr === ecoItem.seq || currentSeqStr.startsWith(ecoItem.seq + " ")) {
-                        bestMatchName = `[${ecoItem.eco} ${ecoItem.name}]`;
-                        break;
+            // [최적화] 수만 개 루프를 돌지 않고, 현재 수순 배열을 한 조각씩 더해가며 해시맵에 찔러봅니다. (속도 O(1), 최대 30번 반복)
+            if (currentSeqStr !== "") {
+                let moveArr = currentSeqStr.split(" ");
+                let testSeq = "";
+                for (let i = 0; i < moveArr.length; i++) {
+                    testSeq += (i > 0 ? " " : "") + moveArr[i];
+                    // 해시맵 즉각 참조!
+                    if (optimizedEcoDict[testSeq]) {
+                        let eco = optimizedEcoDict[testSeq][0];
+                        let name = optimizedEcoDict[testSeq][1];
+                        bestMatchName = `[${eco} ${name}]`;
                     }
                 }
             }
             document.getElementById('opening-name').innerText = bestMatchName;
         }
 
-        // 앱 시작 실행
         loadData();
     </script>
 
-    <!-- 서비스 워커 등록 (PWA 앱 설치 인식용) -->
     <script>
         if ('serviceWorker' in navigator) { 
             navigator.serviceWorker.register('sw.js').catch(err => console.log('SW 실패:', err)); 
