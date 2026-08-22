@@ -61,7 +61,11 @@
 
     <script>
         let game;
-        try { game = new Chess(); } catch(e) { alert("체스 엔진 로딩 실패."); }
+        let fullGame; // [복구 완료] 오프닝 이름 추적용 '숨겨진 전체 보드'
+        try { 
+            game = new Chess(); 
+            fullGame = new Chess();
+        } catch(e) { alert("체스 엔진 로딩 실패."); }
         
         let combinedTree = {};
         let optimizedEcoDict = {}; 
@@ -72,15 +76,29 @@
         let isWaitingForComputer = false;
         
         let globalStartFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-        let globalPosName = "Starting Position";
+        let globalStartMoves = ""; // 저장된 초기 기보(예: "1. g3")를 저장할 변수
 
         const sndMove = new Audio('sounds/sound_move.wav');
         const sndCapture = new Audio('sounds/sound_capture.wav');
         const sndError = new Audio('sounds/sound_capture.wav');
 
-        // [핵심 버그 수정] FEN에서 앙파상 타겟 및 잡다한 숫자를 빼고 '기물배치+차례+캐슬링' 3가지만 비교합니다. (충돌 0%)
+        // 앙파상 등 불필요한 FEN 데이터를 날려 충돌을 0%로 만듭니다.
         function getBaseFen(fen) {
             return fen.split(' ').slice(0, 3).join(' ');
+        }
+
+        // [복구 완료] 저장된 초기 수순(예: "1. g3")을 파싱하여 숨겨진 보드를 똑같이 세팅하는 함수
+        function syncFullGame() {
+            fullGame.reset();
+            if (globalStartMoves && globalStartMoves !== "Starting Position") {
+                let tokens = globalStartMoves.split(/\s+/);
+                for (let t of tokens) {
+                    let san = t.replace(/^\d+\.+/, ""); // "1.", "2." 같은 숫자 제거
+                    if (san) {
+                        try { fullGame.move(san); } catch(e) {}
+                    }
+                }
+            }
         }
 
         async function loadData() {
@@ -92,20 +110,18 @@
                 const libData = await libRes.json();
                 optimizedEcoDict = await ecoRes.json();
 
-                // 폴더 중 첫 번째에 저장된 초기 FEN과 오프닝 시작 지점을 잡아냅니다.
                 if (libData.folders) {
                     for (let fk in libData.folders) {
                         if (libData.folders[fk].start_fen) {
                             globalStartFen = libData.folders[fk].start_fen;
                             if (libData.folders[fk].metadata && libData.folders[fk].metadata.pos_name) {
-                                globalPosName = libData.folders[fk].metadata.pos_name;
+                                globalStartMoves = libData.folders[fk].metadata.pos_name;
                             }
                             break;
                         }
                     }
                 }
 
-                // 통합 트리 구축
                 for (let folderKey in libData.tree) {
                     let fens = libData.tree[folderKey];
                     for (let fen in fens) {
@@ -119,15 +135,8 @@
                 
                 document.getElementById('loading').style.display = 'none';
                 
-                // 처음 앱을 켰을 때, 지정된 시작 위치까지 미리 보드를 돌려놓습니다.
                 game.load(globalStartFen);
-                if (globalPosName && globalPosName !== "Starting Position") {
-                    let tokens = globalPosName.split(/\s+/);
-                    for (let t of tokens) {
-                        let san = t.replace(/^\d+\.+/, ""); // "1.", "2." 같은 숫자 제거
-                        if (san) { try { game.move(san); } catch(e) {} }
-                    }
-                }
+                syncFullGame(); // 앱 구동 시 숨겨진 보드 동기화
                 
                 createTouchGrid();
                 updateUI();
@@ -162,15 +171,8 @@
             userColor = color;
             isFlipped = (color === 'b');
             
-            // [핵심] 연습을 시작할 때마다 초기 보드가 아닌 사용자가 저장한 특정 위치(예: g3)로 패스트 포워드 합니다.
             game.load(globalStartFen);
-            if (globalPosName && globalPosName !== "Starting Position") {
-                let tokens = globalPosName.split(/\s+/);
-                for (let t of tokens) {
-                    let san = t.replace(/^\d+\.+/, "");
-                    if (san) { try { game.move(san); } catch(e) {} }
-                }
-            }
+            syncFullGame(); // 재시작 시 숨겨진 보드도 100% 동기화
             
             selectedSquare = null;
             lastMove = null;
@@ -179,7 +181,6 @@
             createTouchGrid();
             updateUI();
 
-            // [추가] 초기 보드의 턴이 유저의 색상과 다르다면 컴퓨터가 바로 둡니다.
             let currentTurn = game.turn();
             if (userColor !== currentTurn) {
                 isWaitingForComputer = true;
@@ -218,6 +219,8 @@
 
                     if (combinedTree[fenBefore] && combinedTree[fenBefore][sanMove]) {
                         game.move(moveObj);
+                        fullGame.move(sanMove); // [복구 완료] 숨겨진 보드에도 수순 기록!
+                        
                         lastMove = moveObj;
                         selectedSquare = null;
                         
@@ -268,6 +271,7 @@
 
             let randomSan = possibleSans[Math.floor(Math.random() * possibleSans.length)];
             let moveObj = game.move(randomSan);
+            fullGame.move(randomSan); // [복구 완료] 숨겨진 보드에도 수순 기록!
 
             lastMove = moveObj;
             playSound(moveObj.captured ? 'capture' : 'move');
@@ -275,7 +279,6 @@
             isWaitingForComputer = false;
             updateUI();
             
-            // 컴퓨터가 둔 후 엔딩인지 체크
             let nextFen = getBaseFen(game.fen());
             if (!combinedTree[nextFen] || Object.keys(combinedTree[nextFen]).length === 0) {
                 document.getElementById('status-msg').innerText = "🎉 준비된 오프닝 라인의 끝에 도달했습니다!";
@@ -355,12 +358,13 @@
             if (isWaitingForComputer) {
                 document.getElementById('status-msg').innerText = "컴퓨터가 응수하는 중...";
                 document.getElementById('status-msg').style.color = "#a0d959";
-            } else if (!game.game_over() && document.getElementById('status-msg').innerText.indexOf('완수') === -1) {
+            } else if (!game.game_over() && document.getElementById('status-msg').innerText.indexOf('완수') === -1 && document.getElementById('status-msg').innerText.indexOf('도달') === -1) {
                 document.getElementById('status-msg').innerText = "당신의 차례입니다. 올바른 오프닝 수를 두세요.";
                 document.getElementById('status-msg').style.color = "#a0d959";
             }
 
-            let history = game.history();
+            // [핵심] 불완전한 game 대신, 모든 역사를 기억하는 fullGame에서 기보를 추출합니다.
+            let history = fullGame.history(); 
             let seq = [];
             for (let i = 0; i < history.length; i++) {
                 if (i % 2 === 0) seq.push(`${(i/2)+1}. ${history[i]}`);
@@ -368,7 +372,7 @@
             }
             let currentSeqStr = seq.join(" ");
 
-            let bestMatchName = globalPosName;
+            let bestMatchName = "Starting Position";
 
             if (currentSeqStr !== "") {
                 let moveArr = currentSeqStr.split(" ");
