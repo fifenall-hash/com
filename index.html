@@ -61,13 +61,7 @@
 
     <script>
         let game;
-        let fullGame; // [핵심] 오프닝 이름 추적용 '숨겨진 전체 보드'
-        try { 
-            game = new Chess(); 
-            fullGame = new Chess();
-        } catch(e) { 
-            alert("체스 엔진 로딩 실패."); 
-        }
+        try { game = new Chess(); } catch(e) { alert("체스 엔진 로딩 실패."); }
         
         let combinedTree = {};
         let optimizedEcoDict = {}; 
@@ -84,28 +78,9 @@
         const sndCapture = new Audio('sounds/sound_capture.wav');
         const sndError = new Audio('sounds/sound_capture.wav');
 
+        // [핵심 버그 수정] FEN에서 앙파상 타겟 및 잡다한 숫자를 빼고 '기물배치+차례+캐슬링' 3가지만 비교합니다. (충돌 0%)
         function getBaseFen(fen) {
-            let spaces = 0;
-            for(let i=0; i<fen.length; i++) {
-                if(fen[i] === ' ') spaces++;
-                if(spaces === 4) return fen.slice(0, i);
-            }
-            return fen;
-        }
-
-        // [핵심] 저장된 초기 수순(예: "1. g3")을 파싱하여 숨겨진 보드를 똑같이 세팅하는 함수
-        function syncFullGame() {
-            fullGame.reset();
-            if (globalPosName && globalPosName !== "Starting Position") {
-                let tokens = globalPosName.split(/\s+/);
-                for (let t of tokens) {
-                    // "1." 같은 턴수 표기 제거 후 순수 기보(SAN)만 추출하여 둠
-                    let san = t.replace(/^\d+\.+/, "");
-                    if (san) {
-                        try { fullGame.move(san); } catch(e) {}
-                    }
-                }
-            }
+            return fen.split(' ').slice(0, 3).join(' ');
         }
 
         async function loadData() {
@@ -117,6 +92,7 @@
                 const libData = await libRes.json();
                 optimizedEcoDict = await ecoRes.json();
 
+                // 폴더 중 첫 번째에 저장된 초기 FEN과 오프닝 시작 지점을 잡아냅니다.
                 if (libData.folders) {
                     for (let fk in libData.folders) {
                         if (libData.folders[fk].start_fen) {
@@ -129,6 +105,7 @@
                     }
                 }
 
+                // 통합 트리 구축
                 for (let folderKey in libData.tree) {
                     let fens = libData.tree[folderKey];
                     for (let fen in fens) {
@@ -142,11 +119,21 @@
                 
                 document.getElementById('loading').style.display = 'none';
                 
+                // 처음 앱을 켰을 때, 지정된 시작 위치까지 미리 보드를 돌려놓습니다.
                 game.load(globalStartFen);
-                syncFullGame(); // 화면 로드 시 숨겨진 보드도 세팅
+                if (globalPosName && globalPosName !== "Starting Position") {
+                    let tokens = globalPosName.split(/\s+/);
+                    for (let t of tokens) {
+                        let san = t.replace(/^\d+\.+/, ""); // "1.", "2." 같은 숫자 제거
+                        if (san) { try { game.move(san); } catch(e) {} }
+                    }
+                }
                 
                 createTouchGrid();
                 updateUI();
+                document.getElementById('status-msg').innerText = "원하는 색상을 선택해 퀴즈를 시작하세요!";
+                document.getElementById('status-msg').style.color = "#dcdcdc";
+
             } catch (e) {
                 document.getElementById('loading').innerHTML = "데이터 로딩 실패!<br><br><span style='font-size:14px;color:#e74c3c;'>인터넷 상태 확인 후 새로고침 하세요.</span>";
             }
@@ -175,8 +162,15 @@
             userColor = color;
             isFlipped = (color === 'b');
             
+            // [핵심] 연습을 시작할 때마다 초기 보드가 아닌 사용자가 저장한 특정 위치(예: g3)로 패스트 포워드 합니다.
             game.load(globalStartFen);
-            syncFullGame(); // 연습을 재시작할 때마다 숨겨진 보드 동기화
+            if (globalPosName && globalPosName !== "Starting Position") {
+                let tokens = globalPosName.split(/\s+/);
+                for (let t of tokens) {
+                    let san = t.replace(/^\d+\.+/, "");
+                    if (san) { try { game.move(san); } catch(e) {} }
+                }
+            }
             
             selectedSquare = null;
             lastMove = null;
@@ -185,10 +179,15 @@
             createTouchGrid();
             updateUI();
 
+            // [추가] 초기 보드의 턴이 유저의 색상과 다르다면 컴퓨터가 바로 둡니다.
             let currentTurn = game.turn();
             if (userColor !== currentTurn) {
                 isWaitingForComputer = true;
+                document.getElementById('status-msg').innerText = "컴퓨터가 응수하는 중...";
                 setTimeout(makeComputerMove, 400);
+            } else {
+                document.getElementById('status-msg').innerText = "당신의 차례입니다. 올바른 오프닝 수를 두세요.";
+                document.getElementById('status-msg').style.color = "#a0d959";
             }
         }
 
@@ -219,8 +218,6 @@
 
                     if (combinedTree[fenBefore] && combinedTree[fenBefore][sanMove]) {
                         game.move(moveObj);
-                        fullGame.move(sanMove); // [추가] 숨겨진 보드에도 수순 적용!
-                        
                         lastMove = moveObj;
                         selectedSquare = null;
                         
@@ -234,7 +231,7 @@
                             document.getElementById('status-msg').style.color = "#a0d959";
                             setTimeout(makeComputerMove, 500);
                         } else {
-                            document.getElementById('status-msg').innerText = "🎉 준비된 오프닝 라인 연습을 완수했습니다!";
+                            document.getElementById('status-msg').innerText = "🎉 준비된 오프닝 라인의 끝에 도달했습니다!";
                             document.getElementById('status-msg').style.color = "#3498db";
                         }
                     } else {
@@ -258,20 +255,32 @@
 
         function makeComputerMove() {
             let currentFen = getBaseFen(game.fen());
-            if (!combinedTree[currentFen]) return;
+            if (!combinedTree[currentFen]) {
+                isWaitingForComputer = false;
+                return;
+            }
 
             let possibleSans = Object.keys(combinedTree[currentFen]);
-            if (possibleSans.length === 0) return;
+            if (possibleSans.length === 0) {
+                isWaitingForComputer = false;
+                return;
+            }
 
             let randomSan = possibleSans[Math.floor(Math.random() * possibleSans.length)];
             let moveObj = game.move(randomSan);
-            fullGame.move(randomSan); // [추가] 숨겨진 보드에도 컴퓨터의 수순 적용!
 
             lastMove = moveObj;
             playSound(moveObj.captured ? 'capture' : 'move');
             
             isWaitingForComputer = false;
             updateUI();
+            
+            // 컴퓨터가 둔 후 엔딩인지 체크
+            let nextFen = getBaseFen(game.fen());
+            if (!combinedTree[nextFen] || Object.keys(combinedTree[nextFen]).length === 0) {
+                document.getElementById('status-msg').innerText = "🎉 준비된 오프닝 라인의 끝에 도달했습니다!";
+                document.getElementById('status-msg').style.color = "#3498db";
+            }
         }
 
         function playSound(type) {
@@ -346,13 +355,12 @@
             if (isWaitingForComputer) {
                 document.getElementById('status-msg').innerText = "컴퓨터가 응수하는 중...";
                 document.getElementById('status-msg').style.color = "#a0d959";
-            } else if (!game.game_over()) {
+            } else if (!game.game_over() && document.getElementById('status-msg').innerText.indexOf('완수') === -1) {
                 document.getElementById('status-msg').innerText = "당신의 차례입니다. 올바른 오프닝 수를 두세요.";
                 document.getElementById('status-msg').style.color = "#a0d959";
             }
 
-            // [변경] 불완전한 game 대신, 첫 수부터 기록된 fullGame의 기록을 뽑아옵니다.
-            let history = fullGame.history(); 
+            let history = game.history();
             let seq = [];
             for (let i = 0; i < history.length; i++) {
                 if (i % 2 === 0) seq.push(`${(i/2)+1}. ${history[i]}`);
@@ -360,7 +368,7 @@
             }
             let currentSeqStr = seq.join(" ");
 
-            let bestMatchName = globalPosName; // 기본값은 library_data에서 가져온 이름 유지
+            let bestMatchName = globalPosName;
 
             if (currentSeqStr !== "") {
                 let moveArr = currentSeqStr.split(" ");
