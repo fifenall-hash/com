@@ -2,6 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
+    <!-- 화면 비율 강제 고정 (모바일에서 줌인 방지) -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Chess Opening Quiz</title>
     <!-- PWA 설정을 위한 manifest 연동 -->
@@ -15,35 +16,41 @@
 
     <style>
         * { box-sizing: border-box; user-select: none; }
-        /* [수정] 모바일 뷰를 위해 화면을 억지로 고정하던 속성 제거하고 자연스럽게 흐르도록 변경 */
-        body { margin: 0; padding: 0; background-color: #262421; color: #dcdcdc; font-family: 'Noto Sans KR', sans-serif; }
         
-        #header { padding: 15px; text-align: center; background-color: #302e2b; border-bottom: 2px solid #4e623b; }
+        /* [수정] 모바일 화면에서 버튼이 짤리지 않게 자연스러운 세로 스크롤 허용 */
+        body { margin: 0; padding: 0; background-color: #262421; color: #dcdcdc; font-family: 'Noto Sans KR', sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        
+        #header { width: 100%; padding: 15px; text-align: center; background-color: #302e2b; border-bottom: 2px solid #4e623b; }
         #opening-name { font-size: 16px; font-weight: bold; color: #f1c40f; min-height: 24px; }
         #status-msg { font-size: 14px; margin-top: 5px; color: #a0d959; }
 
-        #board-wrapper { width: 100%; max-width: 600px; margin: 20px auto 10px auto; position: relative; aspect-ratio: 1/1; background-image: url('images/3dboard.png'); background-size: 100% 100%; }
+        /* [수정] 체스판 여백 최소화하여 버튼과 밀착 */
+        #board-wrapper { width: 100%; max-width: 600px; margin: 15px 0 10px 0; position: relative; aspect-ratio: 1/1; background-image: url('images/3dboard.png'); background-size: 100% 100%; }
         
         .piece, .highlight { position: absolute; background-size: 100% 100%; transition: left 0.15s linear, top 0.15s linear; pointer-events: none; }
         .piece { width: 12.5%; height: 22.7272%; }
         .highlight { width: 12.5%; height: 11.3636%; opacity: 0.5; z-index: 0; }
         
-        /* [수정] 컨트롤 버튼 영역이 보드 바로 아래에 붙도록 수정 */
-        #controls { text-align: center; padding: 15px; background-color: #262421; }
-        button { background-color: #3498db; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 8px; font-weight: bold; cursor: pointer; margin: 0 5px; }
-        button:active { background-color: #2980b9; }
+        /* [수정] 체스판 바로 아래에 버튼 그룹 위치 */
+        #controls { width: 100%; text-align: center; padding: 10px; margin-bottom: 20px; }
+        button { background-color: #3498db; color: white; border: none; padding: 14px 24px; font-size: 16px; border-radius: 8px; font-weight: bold; cursor: pointer; margin: 0 5px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        button:active { background-color: #2980b9; transform: translateY(2px); box-shadow: 0 2px 3px rgba(0,0,0,0.3); }
         .btn-black { background-color: #8e44ad; }
         .btn-black:active { background-color: #732d91; }
 
         #touch-grid { position: absolute; top: 9.0909%; left: 0; width: 100%; height: 90.909%; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); z-index: 100; }
         .touch-square { width: 100%; height: 100%; }
         
-        #loading { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #262421; color: white; display: flex; align-items: center; justify-content: center; z-index: 999; font-size: 20px; font-weight: bold; }
+        #loading { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #262421; color: white; display: flex; align-items: center; justify-content: center; z-index: 999; font-size: 18px; font-weight: bold; flex-direction: column; }
+        .spinner { margin-top: 15px; font-size: 14px; color: #a0d959; }
     </style>
 </head>
 <body>
 
-    <div id="loading">데이터 불러오는 중...</div>
+    <div id="loading">
+        <div id="loading-text">데이터베이스 접속 중...</div>
+        <div class="spinner">이 작업은 최초 1회만 조금 오래 걸립니다</div>
+    </div>
 
     <div id="header">
         <div id="opening-name">Starting Position</div>
@@ -62,16 +69,18 @@
     </div>
 
     <script>
-        let game = new Chess();
+        let game;
+        try { game = new Chess(); } catch(e) { alert("체스 엔진 로딩 실패. 인터넷 연결을 확인해주세요."); }
+        
         let combinedTree = {};
-        let ecoDict = {};
+        let optimizedEcoList = []; // [속도 최적화] 전처리된 오프닝 이름 캐시
         let userColor = 'w';
         let isFlipped = false;
         let selectedSquare = null;
         let lastMove = null;
         let isWaitingForComputer = false;
         
-        // [신규] 기본 오프닝 이름과 시작 FEN을 저장할 전역 변수
+        // [복구 완료] 저장된 초기 상태(예: g3)를 기억할 전역 변수
         let globalStartFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let globalPosName = "Starting Position";
 
@@ -79,21 +88,28 @@
         const sndCapture = new Audio('sounds/sound_capture.wav');
         const sndError = new Audio('sounds/sound_capture.wav');
 
-        // [신규] FEN 문자열에서 뒤쪽 턴수(Halfmove clock 등)를 제외하고 '기물 배치와 차례' 핵심만 잘라내는 함수
+        // [속도 최적화] 메모리 및 연산 낭비를 막는 초고속 FEN 파싱
         function getBaseFen(fen) {
-            return fen.split(' ').slice(0, 4).join(' ');
+            let spaces = 0;
+            for(let i=0; i<fen.length; i++) {
+                if(fen[i] === ' ') spaces++;
+                if(spaces === 4) return fen.slice(0, i);
+            }
+            return fen;
         }
 
         async function loadData() {
             try {
-                const [libRes, ecoRes] = await Promise.all([
-                    fetch('library_data.json'),
-                    fetch('eco.json')
-                ]);
-                const libData = await libRes.json();
-                ecoDict = await ecoRes.json();
+                const loadTxt = document.getElementById('loading-text');
+                loadTxt.innerText = "라이브러리(기보) 다운로드 중...";
 
-                // 1. 자료에서 시작 국면(start_fen) 추출
+                // [속도 최적화] 무거운 eco.json을 빼고, 핵심 게임 파일만 먼저 동기적으로 받음
+                const libRes = await fetch('library_data.json');
+                const libData = await libRes.json();
+
+                loadTxt.innerText = "데이터 압축 해제 및 보드 생성 중...";
+
+                // 1. 자료에서 시작 국면(start_fen) 추출 복구
                 if (libData.folders) {
                     for (let fk in libData.folders) {
                         if (libData.folders[fk].start_fen) {
@@ -101,12 +117,12 @@
                             if (libData.folders[fk].metadata && libData.folders[fk].metadata.pos_name) {
                                 globalPosName = libData.folders[fk].metadata.pos_name;
                             }
-                            break; // 첫 번째 폴더의 시작 국면을 기본으로 채택
+                            break;
                         }
                     }
                 }
 
-                // 2. 통합 트리 구축 (getBaseFen 적용)
+                // 2. 통합 트리 구축
                 for (let folderKey in libData.tree) {
                     let fens = libData.tree[folderKey];
                     for (let fen in fens) {
@@ -118,13 +134,34 @@
                     }
                 }
                 
+                // 로딩 창 끄기 및 즉시 게임 시작!
                 document.getElementById('loading').style.display = 'none';
-                
-                // 앱을 켰을 때도 해당 시작 지점을 보여줌
                 game.load(globalStartFen);
+                createTouchGrid();
                 updateUI();
+
+                // [핵심] 가장 무거운 오프닝 이름 사전(eco.json)은 뒷배경에서 렉 없이 비동기 로드
+                fetch('eco.json').then(r => r.json()).then(rawEco => {
+                    for (let k in rawEco) {
+                        let details = rawEco[k];
+                        if (details.moves && details.name) {
+                            let cleanName = details.name.split(",").map(p => p.trim()).filter(p => !/\b\d+\./.test(p) && !/\b[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8]/.test(p)).join(", ");
+                            if (!cleanName) cleanName = details.name;
+                            optimizedEcoList.push({
+                                seq: details.moves,
+                                len: details.moves.length,
+                                eco: details.eco,
+                                name: cleanName
+                            });
+                        }
+                    }
+                    // 가장 긴(구체적인) 수순부터 매칭되도록 길이순 정렬
+                    optimizedEcoList.sort((a, b) => b.len - a.len);
+                    updateUI(); // 뒷배경에서 로딩 완료되면 오프닝 이름만 새로고침
+                }).catch(e => console.log("ECO 사전 로드 생략됨"));
+
             } catch (e) {
-                document.getElementById('loading').innerText = "데이터 로딩 실패! (오프라인 상태인지 확인하세요)";
+                document.getElementById('loading').innerHTML = "데이터 로딩 실패!<br><br><span style='font-size:14px;color:#e74c3c;'>인터넷 상태 확인 후 새로고침 하세요.</span>";
             }
         }
 
@@ -151,7 +188,7 @@
             userColor = color;
             isFlipped = (color === 'b');
             
-            // [수정] 무조건 reset()하지 않고 추출해둔 시작 국면(FEN)으로 로드합니다.
+            // [복구 완료] 무조건 초기화(reset)가 아닌 추출된 FEN으로 시작!
             game.load(globalStartFen);
             
             selectedSquare = null;
@@ -161,7 +198,7 @@
             createTouchGrid();
             updateUI();
 
-            // [수정] 무조건 흑일 때만 컴퓨터가 두는 게 아니라, 보드의 현재 차례와 유저의 차례를 비교하여 컴퓨터 동작 결정
+            // [복구 완료] 세팅된 보드의 현재 차례가 내 색상과 다르면 컴퓨터가 먼저 시작함!
             let currentTurn = game.turn();
             if (userColor !== currentTurn) {
                 isWaitingForComputer = true;
@@ -207,7 +244,7 @@
                             isWaitingForComputer = true;
                             document.getElementById('status-msg').innerText = "정답! (컴퓨터의 응수를 기다립니다...)";
                             document.getElementById('status-msg').style.color = "#a0d959";
-                            setTimeout(makeComputerMove, 600);
+                            setTimeout(makeComputerMove, 500);
                         } else {
                             document.getElementById('status-msg').innerText = "🎉 준비된 오프닝 라인 연습을 완수했습니다!";
                             document.getElementById('status-msg').style.color = "#3498db";
@@ -333,31 +370,29 @@
             }
             let currentSeqStr = seq.join(" ");
 
-            let bestMatchName = globalPosName; // 초기에는 저장된 이름을 따름
-            let bestMatchLen = -1;
+            let bestMatchName = globalPosName;
 
-            if (currentSeqStr !== "") {
-                for (let moves in ecoDict) {
-                    if (currentSeqStr === moves || currentSeqStr.startsWith(moves + " ")) {
-                        if (moves.length > bestMatchLen) {
-                            bestMatchLen = moves.length;
-                            let eco = ecoDict[moves].eco;
-                            let name = ecoDict[moves].name;
-                            name = name.split(",").map(p => p.trim()).filter(p => !/\b\d+\./.test(p) && !/\b[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8]/.test(p)).join(", ");
-                            bestMatchName = `[${eco} ${name}]`;
-                        }
+            // [속도 최적화] 전처리된 배열을 활용하여 모바일 프리징(렉) 완벽 방지
+            if (currentSeqStr !== "" && optimizedEcoList.length > 0) {
+                for (let i = 0; i < optimizedEcoList.length; i++) {
+                    let ecoItem = optimizedEcoList[i];
+                    if (currentSeqStr === ecoItem.seq || currentSeqStr.startsWith(ecoItem.seq + " ")) {
+                        bestMatchName = `[${ecoItem.eco} ${ecoItem.name}]`;
+                        break;
                     }
                 }
             }
             document.getElementById('opening-name').innerText = bestMatchName;
         }
 
+        // 앱 시작 실행
+        loadData();
     </script>
 
-    <!-- 서비스 워커 등록 스크립트 -->
+    <!-- 서비스 워커 등록 (PWA 앱 설치 인식용) -->
     <script>
         if ('serviceWorker' in navigator) { 
-            navigator.serviceWorker.register('sw.js'); 
+            navigator.serviceWorker.register('sw.js').catch(err => console.log('SW 실패:', err)); 
         }
     </script>
 </body>
