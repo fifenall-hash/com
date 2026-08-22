@@ -34,15 +34,18 @@
         #notation-header { background-color: #4e623b; color: white; font-weight: bold; padding: 10px; text-align: center; font-size: 15px; }
         #notation-body { flex: 1; overflow-y: auto; padding: 10px; font-size: 15px; line-height: 1.6; color: #dcdcdc; text-align: left; }
         .move-row { display: flex; margin-bottom: 4px; border-bottom: 1px solid #444; padding-bottom: 2px; }
+        /* [수정] 백과 흑의 기보 텍스트를 숫자와 동일한 은회색으로 통일 */
         .move-num { width: 45px; color: #7f8c8d; font-weight: bold; }
-        .move-w { flex: 1; color: #a0d959; font-weight: bold; }
-        .move-b { flex: 1; color: #5ab5f2; font-weight: bold; }
+        .move-w { flex: 1; color: #7f8c8d; font-weight: bold; }
+        .move-b { flex: 1; color: #7f8c8d; font-weight: bold; }
         
         #controls { width: 100%; text-align: center; padding: 10px; margin-bottom: 20px; }
-        button { background-color: #3498db; color: white; border: none; padding: 14px 24px; font-size: 16px; border-radius: 8px; font-weight: bold; cursor: pointer; margin: 0 5px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        button:active { background-color: #2980b9; transform: translateY(2px); box-shadow: 0 2px 3px rgba(0,0,0,0.3); }
-        .btn-black { background-color: #8e44ad; }
-        .btn-black:active { background-color: #732d91; }
+        /* [수정] 기본 버튼(백으로 연습) 옅은 회색 배경, 금색 텍스트 (그림자 추가로 가독성 확보) */
+        button { background-color: #dcdcdc; color: #ffd700; text-shadow: 1px 1px 2px rgba(0,0,0,0.6); border: none; padding: 14px 24px; font-size: 16px; border-radius: 8px; font-weight: bold; cursor: pointer; margin: 0 5px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        button:active { background-color: #c0c0c0; transform: translateY(2px); box-shadow: 0 2px 3px rgba(0,0,0,0.3); }
+        /* [수정] 흑으로 연습 버튼 짙은 회색 배경 */
+        .btn-black { background-color: #4a4a4a; }
+        .btn-black:active { background-color: #2b2b2b; }
 
         #loading { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #262421; color: white; display: flex; align-items: center; justify-content: center; z-index: 999; font-size: 18px; font-weight: bold; flex-direction: column; }
 
@@ -98,7 +101,6 @@
         let lastMove = null;
         let isWaitingForComputer = false;
         
-        // [오류 원인 완벽해결] 전역 변수명을 완전히 통일시켰습니다.
         let globalStartFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let globalPosName = "Starting Position"; 
 
@@ -202,7 +204,6 @@
             
             createTouchGrid();
             
-            // 내 색상과 보드의 차례를 비교해서 컴퓨터가 바로 둬야할지 파악
             let currentTurn = game.turn();
             if (userColor !== currentTurn) {
                 isWaitingForComputer = true;
@@ -254,14 +255,16 @@
                         if (combinedTree[newFen] && Object.keys(combinedTree[newFen]).length > 0) {
                             isWaitingForComputer = true;
                             updateUI();
-                            // UI가 업데이트된 직후에 정답 메시지를 고정
                             document.getElementById('status-msg').innerText = "정답! (컴퓨터의 응수를 기다립니다...)";
                             document.getElementById('status-msg').style.color = "#a0d959";
                             setTimeout(makeComputerMove, 500);
                         } else {
+                            // [수정] 사용자의 턴에서 라인의 끝에 도달했을 경우, 1.5초 후 자동으로 시작 위치로 리셋
+                            isWaitingForComputer = true; // 대기 시간 동안 추가 터치 방지
                             updateUI();
-                            document.getElementById('status-msg').innerText = "🎉 준비된 오프닝 라인의 끝에 도달했습니다!";
-                            document.getElementById('status-msg').style.color = "#3498db";
+                            document.getElementById('status-msg').innerText = "🎉 라인 마스터! (1.5초 후 자동으로 다시 시작합니다)";
+                            document.getElementById('status-msg').style.color = "#f1c40f";
+                            setTimeout(() => startGame(userColor), 1500);
                         }
                     } else {
                         selectedSquare = null;
@@ -306,9 +309,12 @@
             
             let nextFen = getBaseFen(game.fen());
             if (!combinedTree[nextFen] || Object.keys(combinedTree[nextFen]).length === 0) {
+                // [수정] 컴퓨터의 턴에서 라인의 끝에 도달했을 경우, 1.5초 후 자동으로 시작 위치로 리셋
+                isWaitingForComputer = true; // 대기 시간 동안 추가 터치 방지
                 updateUI();
-                document.getElementById('status-msg').innerText = "🎉 준비된 오프닝 라인의 끝에 도달했습니다!";
-                document.getElementById('status-msg').style.color = "#3498db";
+                document.getElementById('status-msg').innerText = "🎉 라인 마스터! (1.5초 후 자동으로 다시 시작합니다)";
+                document.getElementById('status-msg').style.color = "#f1c40f";
+                setTimeout(() => startGame(userColor), 1500);
             } else {
                 updateUI();
                 document.getElementById('status-msg').innerText = "당신의 차례입니다. 올바른 오프닝 수를 두세요.";
@@ -403,6 +409,15 @@
         function updateUI() {
             renderBoard();
             updateNotation(); 
+
+            // 자동 시작 타이머나 메시지 로딩 중에 글자가 덮어씌워지지 않도록 방어하는 로직
+            if (isWaitingForComputer && document.getElementById('status-msg').innerText.indexOf('다시 시작') === -1) {
+                document.getElementById('status-msg').innerText = "컴퓨터가 응수하는 중...";
+                document.getElementById('status-msg').style.color = "#a0d959";
+            } else if (!game.game_over() && document.getElementById('status-msg').innerText.indexOf('완수') === -1 && document.getElementById('status-msg').innerText.indexOf('도달') === -1 && document.getElementById('status-msg').innerText.indexOf('다시 시작') === -1) {
+                document.getElementById('status-msg').innerText = "당신의 차례입니다. 올바른 오프닝 수를 두세요.";
+                document.getElementById('status-msg').style.color = "#a0d959";
+            }
 
             let history = fullGame.history(); 
             let seq = [];
