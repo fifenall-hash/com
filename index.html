@@ -16,6 +16,10 @@
         body { margin: 0; padding: 0; background-color: #262421; color: #dcdcdc; font-family: 'Noto Sans KR', sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; overflow-x: hidden; }
         
         #header { width: 100%; padding: 15px; text-align: center; background-color: #302e2b; border-bottom: 2px solid #4e623b; }
+        
+        /* [신규] 폴더 선택 드롭다운 디자인 */
+        #folder-dropdown { width: 100%; max-width: 300px; margin: 0 auto 10px auto; display: block; padding: 8px; font-size: 15px; font-weight: bold; background-color: #262421; color: #a0d959; border: 1px solid #4e623b; border-radius: 5px; outline: none; cursor: pointer; text-align: center; }
+        
         #opening-name { font-size: 16px; font-weight: bold; color: #f1c40f; min-height: 24px; }
         #status-msg { font-size: 14px; margin-top: 5px; color: #a0d959; }
 
@@ -43,7 +47,6 @@
         .move-w { flex: 1; color: #7f8c8d; font-weight: bold; }
         .move-b { flex: 1; color: #7f8c8d; font-weight: bold; }
         
-        /* [신규] 평가치 디자인 */
         .eval-badge { font-size: 12px; color: #95a5a6; margin-left: 5px; font-weight: normal; }
         
         #controls { width: 100%; text-align: center; padding: 10px 10px 5px 10px; }
@@ -70,8 +73,10 @@
     </div>
 
     <div id="header">
+        <!-- [신규] 폴더 선택 UI -->
+        <select id="folder-dropdown" onchange="onFolderChange(this.value)"></select>
         <div id="opening-name">Starting Position</div>
-        <div id="status-msg">원하는 색상을 선택해 퀴즈를 시작하세요!</div>
+        <div id="status-msg">오프닝을 불러오고 있습니다...</div>
     </div>
 
     <div id="main-container">
@@ -115,8 +120,11 @@
             fullGame = new Chess();
         } catch(e) { alert("체스 엔진 로딩 실패."); }
         
+        let globalLibFolders = {};
+        let globalLibTree = {};
         let combinedTree = {};
         let optimizedEcoDict = {}; 
+        
         let userColor = 'w';
         let isFlipped = false;
         let selectedSquare = null;
@@ -126,9 +134,7 @@
         let globalStartFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let globalPosName = "Starting Position"; 
 
-        // [신규] 전체 게임의 평가치를 담는 배열
         let fullGameEvals = [];
-
         let isReplaying = false;
         let autoResetTimeoutId = null;
         let replayTimeoutId = null;
@@ -141,7 +147,6 @@
             return fen.split(' ').slice(0, 3).join(' ');
         }
 
-        // [수정] 시작 국면을 재현할 때 평가치도 함께 추출하여 fullGameEvals에 세팅합니다.
         function syncFullGame() {
             fullGame.reset();
             fullGameEvals = [];
@@ -163,6 +168,50 @@
                     }
                 }
             }
+        }
+
+        // [신규] 폴더 선택 시 실행되는 함수
+        function onFolderChange(folderKey) {
+            if (!globalLibFolders[folderKey]) return;
+
+            // 1. 해당 폴더의 시작 정보 세팅
+            globalStartFen = globalLibFolders[folderKey].start_fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+            globalPosName = globalLibFolders[folderKey].metadata?.pos_name || "Starting Position";
+            
+            // 2. 해당 폴더의 트리(기보 데이터)만 따로 추출해서 조합
+            combinedTree = {};
+            let fens = globalLibTree[folderKey];
+            if (fens) {
+                for (let fen in fens) {
+                    let baseFen = getBaseFen(fen);
+                    if (!combinedTree[baseFen]) combinedTree[baseFen] = {};
+                    for (let san in fens[fen]) {
+                        let rawVal = fens[fen][san];
+                        let ev = "";
+                        if (typeof rawVal === 'object' && rawVal !== null && rawVal.eval !== undefined) {
+                            ev = String(rawVal.eval);
+                        } else if (rawVal !== true && rawVal !== null && typeof rawVal !== 'object') {
+                            ev = String(rawVal);
+                        }
+                        combinedTree[baseFen][san] = ev;
+                    }
+                }
+            }
+
+            // 3. 자동 색상 판별 로직 (가지 수가 1개면 유저 차례로 배정)
+            let startBaseFen = getBaseFen(globalStartFen);
+            let turn = globalStartFen.split(' ')[1]; // 'w' 또는 'b'
+            let branchCount = combinedTree[startBaseFen] ? Object.keys(combinedTree[startBaseFen]).length : 0;
+            
+            let autoColor = 'w';
+            if (turn === 'w') {
+                autoColor = (branchCount === 1) ? 'w' : 'b';
+            } else {
+                autoColor = (branchCount === 1) ? 'b' : 'w';
+            }
+
+            // 4. 결정된 색상으로 즉시 게임 시작
+            startGame(autoColor);
         }
 
         function copyPGN() {
@@ -189,14 +238,8 @@
         }
 
         function startReplay() {
-            if (autoResetTimeoutId) {
-                clearTimeout(autoResetTimeoutId);
-                autoResetTimeoutId = null;
-            }
-            if (replayTimeoutId) {
-                clearTimeout(replayTimeoutId);
-                replayTimeoutId = null;
-            }
+            if (autoResetTimeoutId) { clearTimeout(autoResetTimeoutId); autoResetTimeoutId = null; }
+            if (replayTimeoutId) { clearTimeout(replayTimeoutId); replayTimeoutId = null; }
             
             isReplaying = true;
             document.getElementById('replay-btn').style.display = 'none';
@@ -204,11 +247,11 @@
             document.getElementById('status-msg').style.color = "#f39c12";
 
             let moves = fullGame.history();
-            let savedEvals = [...fullGameEvals]; // 평가치 백업
+            let savedEvals = [...fullGameEvals]; 
             
             game.reset();
             fullGame.reset();
-            fullGameEvals = []; // 다시 쌓기 위해 비움
+            fullGameEvals = []; 
             
             selectedSquare = null;
             lastMove = null;
@@ -230,9 +273,7 @@
                 let moveObj = game.move(san);
                 fullGame.move(san);
                 
-                // [신규] 감상 모드 중에도 백업해둔 평가치를 한 수씩 복원
                 fullGameEvals.push(savedEvals[moveIndex]);
-                
                 lastMove = moveObj;
                 
                 playSound(moveObj.captured ? 'capture' : 'move');
@@ -281,46 +322,29 @@
                 const libData = await libRes.json();
                 optimizedEcoDict = await ecoRes.json();
 
-                if (libData.folders) {
-                    for (let fk in libData.folders) {
-                        if (libData.folders[fk].start_fen) {
-                            globalStartFen = libData.folders[fk].start_fen;
-                            if (libData.folders[fk].metadata && libData.folders[fk].metadata.pos_name) {
-                                globalPosName = libData.folders[fk].metadata.pos_name;
-                            }
-                            break;
-                        }
-                    }
-                }
+                globalLibFolders = libData.folders || {};
+                globalLibTree = libData.tree || {};
 
-                for (let folderKey in libData.tree) {
-                    let fens = libData.tree[folderKey];
-                    for (let fen in fens) {
-                        let baseFen = getBaseFen(fen);
-                        if (!combinedTree[baseFen]) combinedTree[baseFen] = {};
-                        for (let san in fens[fen]) {
-                            // [수정] 평가치 추출 로직: 객체, 문자열, 숫자를 모두 캐치하여 저장
-                            let rawVal = fens[fen][san];
-                            let ev = "";
-                            if (typeof rawVal === 'object' && rawVal !== null && rawVal.eval !== undefined) {
-                                ev = String(rawVal.eval);
-                            } else if (rawVal !== true && rawVal !== null && typeof rawVal !== 'object') {
-                                ev = String(rawVal);
-                            }
-                            combinedTree[baseFen][san] = ev;
-                        }
-                    }
+                // [신규] 드롭다운 메뉴 채우기
+                const dropdown = document.getElementById('folder-dropdown');
+                dropdown.innerHTML = '';
+                let firstFolderKey = null;
+                
+                for (let fk in globalLibFolders) {
+                    if (!firstFolderKey) firstFolderKey = fk;
+                    let opt = document.createElement('option');
+                    opt.value = fk;
+                    // 폴더 이름이 없으면 키값 자체를 이름으로 사용
+                    opt.text = globalLibFolders[fk].name || fk;
+                    dropdown.appendChild(opt);
                 }
                 
                 document.getElementById('loading').style.display = 'none';
                 
-                game.load(globalStartFen);
-                syncFullGame(); 
-                
-                createTouchGrid();
-                updateUI();
-                document.getElementById('status-msg').innerText = "원하는 색상을 선택해 퀴즈를 시작하세요!";
-                document.getElementById('status-msg').style.color = "#dcdcdc";
+                // 첫 번째 폴더를 자동으로 강제 선택 및 실행
+                if (firstFolderKey) {
+                    onFolderChange(firstFolderKey);
+                }
 
             } catch (e) {
                 document.getElementById('loading').innerHTML = "데이터 로딩 실패!<br><br><span style='font-size:14px;color:#e74c3c;'>인터넷 상태 확인 후 새로고침 하세요.</span>";
@@ -404,11 +428,11 @@
                     let sanMove = moveObj.san;
 
                     if (combinedTree[fenBefore] && combinedTree[fenBefore][sanMove] !== undefined) {
-                        let ev = combinedTree[fenBefore][sanMove]; // 평가치 추출
+                        let ev = combinedTree[fenBefore][sanMove]; 
                         
                         game.move(moveObj);
                         fullGame.move(sanMove); 
-                        fullGameEvals.push(ev); // 평가치 배열에 저장
+                        fullGameEvals.push(ev); 
                         
                         lastMove = moveObj;
                         selectedSquare = null;
@@ -469,11 +493,11 @@
             }
 
             let randomSan = possibleSans[Math.floor(Math.random() * possibleSans.length)];
-            let ev = combinedTree[currentFen][randomSan]; // 평가치 추출
+            let ev = combinedTree[currentFen][randomSan]; 
             
             let moveObj = game.move(randomSan);
             fullGame.move(randomSan); 
-            fullGameEvals.push(ev); // 평가치 배열에 저장
+            fullGameEvals.push(ev); 
 
             lastMove = moveObj;
             playSound(moveObj.captured ? 'capture' : 'move');
@@ -628,7 +652,6 @@
             return `<div class="highlight" style="left: ${leftPct}%; top: ${topPct}%; background-color: ${color};"></div>`;
         }
 
-        // [수정] 평가치를 기보에 함께 그리는 로직 적용
         function updateNotation() {
             let history = fullGame.history();
             let html = '';
