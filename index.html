@@ -89,7 +89,8 @@
             <input type="checkbox" id="auto-reset" style="vertical-align: middle; width: 16px; height: 16px;"> 자동 리셋
         </label>
         <button onclick="copyPGN()" style="padding: 8px 16px; font-size: 14px; background-color: #27ae60; color: white; text-shadow: none;">📋 PGN 복사</button>
-        <!-- 앱 설치 버튼 (기본적으로 숨겨짐, 브라우저가 지원할 때만 표시) -->
+        <!-- [신규] 기보 감상 버튼 -->
+        <button id="replay-btn" onclick="startReplay()" style="display: none; padding: 8px 16px; font-size: 14px; background-color: #f39c12; color: white; text-shadow: none;">🎬 기보 감상</button>
         <button id="install-btn" style="display: none; padding: 8px 16px; font-size: 14px; background-color: #e67e22; color: white; text-shadow: none;">📲 앱 설치</button>
     </div>
 
@@ -111,6 +112,11 @@
         
         let globalStartFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let globalPosName = "Starting Position"; 
+
+        // [신규] 기보 감상 및 자동 리셋 타이머 관리를 위한 변수들
+        let isReplaying = false;
+        let autoResetTimeoutId = null;
+        let replayTimeoutId = null;
 
         const sndMove = new Audio('sounds/sound_move.wav');
         const sndCapture = new Audio('sounds/sound_capture.wav');
@@ -156,34 +162,84 @@
             }
         }
 
+        // --- 기보 감상 (Replay) 시스템 ---
+        function startReplay() {
+            if (autoResetTimeoutId) {
+                clearTimeout(autoResetTimeoutId);
+                autoResetTimeoutId = null;
+            }
+            
+            isReplaying = true;
+            document.getElementById('replay-btn').style.display = 'none';
+            document.getElementById('status-msg').innerText = "기보 감상 중...";
+            document.getElementById('status-msg').style.color = "#f39c12";
+
+            let moves = fullGame.history();
+            
+            // 시각적 효과를 극대화하기 위해 완전한 초기 보드(Standard Start)에서부터 시작합니다.
+            game.reset();
+            fullGame.reset();
+            
+            selectedSquare = null;
+            lastMove = null;
+            
+            let moveIndex = 0;
+            
+            function playNextMove() {
+                if (!isReplaying) return; // 중간에 연습 버튼을 눌러 인터럽트 된 경우 정지
+                
+                if (moveIndex >= moves.length) {
+                    isReplaying = false;
+                    document.getElementById('status-msg').innerText = "기보 감상이 끝났습니다. 연습 버튼을 눌러 다시 시작하세요.";
+                    document.getElementById('status-msg').style.color = "#3498db";
+                    return;
+                }
+                
+                let san = moves[moveIndex];
+                let moveObj = game.move(san);
+                fullGame.move(san);
+                lastMove = moveObj;
+                
+                playSound(moveObj.captured ? 'capture' : 'move');
+                updateUI();
+                
+                // updateUI가 상태 메시지를 덮어씌우는 것을 방지하고 감상 중 텍스트를 강제 유지
+                document.getElementById('status-msg').innerText = "기보 감상 중... (" + (moveIndex + 1) + "/" + moves.length + ")";
+                document.getElementById('status-msg').style.color = "#f39c12";
+                
+                moveIndex++;
+                replayTimeoutId = setTimeout(playNextMove, 1500); // 1.5초 간격으로 자동 재생
+            }
+            
+            updateUI();
+            document.getElementById('status-msg').innerText = "기보 감상 준비 중...";
+            document.getElementById('status-msg').style.color = "#f39c12";
+            
+            replayTimeoutId = setTimeout(playNextMove, 1000);
+        }
+
         // --- PWA 앱 설치 로직 ---
         let deferredPrompt;
         const installBtn = document.getElementById('install-btn');
 
         window.addEventListener('beforeinstallprompt', (e) => {
-            e.preventDefault(); // 크롬의 기본 설치 팝업 방지
-            deferredPrompt = e; // 이벤트를 저장해둠
-            installBtn.style.display = 'inline-block'; // 숨겨뒀던 설치 버튼 표시
+            e.preventDefault(); 
+            deferredPrompt = e; 
+            installBtn.style.display = 'inline-block'; 
         });
 
         installBtn.addEventListener('click', async () => {
             if (deferredPrompt) {
-                deferredPrompt.prompt(); // 설치 프롬프트 띄우기
+                deferredPrompt.prompt(); 
                 const { outcome } = await deferredPrompt.userChoice;
-                if (outcome === 'accepted') {
-                    console.log('앱 설치가 수락되었습니다.');
-                } else {
-                    console.log('앱 설치가 거부되었습니다.');
-                }
                 deferredPrompt = null;
-                installBtn.style.display = 'none'; // 설치를 완료/거부하면 버튼 숨김
+                installBtn.style.display = 'none'; 
             }
         });
 
         window.addEventListener('appinstalled', () => {
             deferredPrompt = null;
             installBtn.style.display = 'none';
-            console.log('PWA 앱 설치 완료');
         });
         // -----------------------
 
@@ -254,6 +310,12 @@
         }
 
         function startGame(color) {
+            // 진행 중이던 타이머와 감상 모드를 즉시 리셋
+            if (autoResetTimeoutId) { clearTimeout(autoResetTimeoutId); autoResetTimeoutId = null; }
+            if (replayTimeoutId) { clearTimeout(replayTimeoutId); replayTimeoutId = null; }
+            isReplaying = false;
+            document.getElementById('replay-btn').style.display = 'none';
+
             userColor = color;
             isFlipped = (color === 'b');
             
@@ -281,7 +343,8 @@
         }
 
         function handleSquareClick(sq) {
-            if (isWaitingForComputer || game.game_over()) return;
+            // 기보 감상 모드 중일 때도 터치를 방어합니다.
+            if (isWaitingForComputer || game.game_over() || isReplaying) return;
 
             let piece = game.get(sq);
 
@@ -321,13 +384,15 @@
                             document.getElementById('status-msg').style.color = "#a0d959";
                             setTimeout(makeComputerMove, 500);
                         } else {
-                            isWaitingForComputer = true; // 터치 차단
+                            isWaitingForComputer = true; 
+                            document.getElementById('replay-btn').style.display = 'inline-block'; // 감상 버튼 등장
                             updateUI();
+                            
                             let isAuto = document.getElementById('auto-reset').checked;
                             if (isAuto) {
                                 document.getElementById('status-msg').innerText = "🎉 라인 마스터! (1.5초 후 다시 시작합니다)";
                                 document.getElementById('status-msg').style.color = "#f1c40f";
-                                setTimeout(() => startGame(userColor), 1500);
+                                autoResetTimeoutId = setTimeout(() => startGame(userColor), 1500);
                             } else {
                                 document.getElementById('status-msg').innerText = "🎉 준비된 오프닝 라인의 끝에 도달했습니다!";
                                 document.getElementById('status-msg').style.color = "#3498db";
@@ -376,13 +441,15 @@
             
             let nextFen = getBaseFen(game.fen());
             if (!combinedTree[nextFen] || Object.keys(combinedTree[nextFen]).length === 0) {
-                isWaitingForComputer = true; // 터치 차단
+                isWaitingForComputer = true; 
+                document.getElementById('replay-btn').style.display = 'inline-block'; // 감상 버튼 등장
                 updateUI();
+                
                 let isAuto = document.getElementById('auto-reset').checked;
                 if (isAuto) {
                     document.getElementById('status-msg').innerText = "🎉 라인 마스터! (1.5초 후 다시 시작합니다)";
                     document.getElementById('status-msg').style.color = "#f1c40f";
-                    setTimeout(() => startGame(userColor), 1500);
+                    autoResetTimeoutId = setTimeout(() => startGame(userColor), 1500);
                 } else {
                     document.getElementById('status-msg').innerText = "🎉 준비된 오프닝 라인의 끝에 도달했습니다!";
                     document.getElementById('status-msg').style.color = "#3498db";
@@ -482,12 +549,14 @@
             renderBoard();
             updateNotation(); 
 
-            if (isWaitingForComputer && document.getElementById('status-msg').innerText.indexOf('다시 시작') === -1 && document.getElementById('status-msg').innerText.indexOf('마스터') === -1 && document.getElementById('status-msg').innerText.indexOf('도달') === -1) {
-                document.getElementById('status-msg').innerText = "컴퓨터가 응수하는 중...";
-                document.getElementById('status-msg').style.color = "#a0d959";
-            } else if (!game.game_over() && document.getElementById('status-msg').innerText.indexOf('완수') === -1 && document.getElementById('status-msg').innerText.indexOf('도달') === -1 && document.getElementById('status-msg').innerText.indexOf('다시 시작') === -1 && document.getElementById('status-msg').innerText.indexOf('마스터') === -1) {
-                document.getElementById('status-msg').innerText = "당신의 차례입니다. 올바른 오프닝 수를 두세요.";
-                document.getElementById('status-msg').style.color = "#a0d959";
+            if (!isReplaying) {
+                if (isWaitingForComputer && document.getElementById('status-msg').innerText.indexOf('다시 시작') === -1 && document.getElementById('status-msg').innerText.indexOf('마스터') === -1 && document.getElementById('status-msg').innerText.indexOf('도달') === -1) {
+                    document.getElementById('status-msg').innerText = "컴퓨터가 응수하는 중...";
+                    document.getElementById('status-msg').style.color = "#a0d959";
+                } else if (!game.game_over() && document.getElementById('status-msg').innerText.indexOf('완수') === -1 && document.getElementById('status-msg').innerText.indexOf('도달') === -1 && document.getElementById('status-msg').innerText.indexOf('다시 시작') === -1 && document.getElementById('status-msg').innerText.indexOf('마스터') === -1) {
+                    document.getElementById('status-msg').innerText = "당신의 차례입니다. 올바른 오프닝 수를 두세요.";
+                    document.getElementById('status-msg').style.color = "#a0d959";
+                }
             }
 
             let history = fullGame.history(); 
