@@ -89,6 +89,8 @@
             <input type="checkbox" id="auto-reset" style="vertical-align: middle; width: 16px; height: 16px;"> 자동 리셋
         </label>
         <button onclick="copyPGN()" style="padding: 8px 16px; font-size: 14px; background-color: #27ae60; color: white; text-shadow: none;">📋 PGN 복사</button>
+        <!-- 앱 설치 버튼 (기본적으로 숨겨짐, 브라우저가 지원할 때만 표시) -->
+        <button id="install-btn" style="display: none; padding: 8px 16px; font-size: 14px; background-color: #e67e22; color: white; text-shadow: none;">📲 앱 설치</button>
     </div>
 
     <script>
@@ -153,6 +155,37 @@
                 textArea.remove();
             }
         }
+
+        // --- PWA 앱 설치 로직 ---
+        let deferredPrompt;
+        const installBtn = document.getElementById('install-btn');
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault(); // 크롬의 기본 설치 팝업 방지
+            deferredPrompt = e; // 이벤트를 저장해둠
+            installBtn.style.display = 'inline-block'; // 숨겨뒀던 설치 버튼 표시
+        });
+
+        installBtn.addEventListener('click', async () => {
+            if (deferredPrompt) {
+                deferredPrompt.prompt(); // 설치 프롬프트 띄우기
+                const { outcome } = await deferredPrompt.userChoice;
+                if (outcome === 'accepted') {
+                    console.log('앱 설치가 수락되었습니다.');
+                } else {
+                    console.log('앱 설치가 거부되었습니다.');
+                }
+                deferredPrompt = null;
+                installBtn.style.display = 'none'; // 설치를 완료/거부하면 버튼 숨김
+            }
+        });
+
+        window.addEventListener('appinstalled', () => {
+            deferredPrompt = null;
+            installBtn.style.display = 'none';
+            console.log('PWA 앱 설치 완료');
+        });
+        // -----------------------
 
         async function loadData() {
             try {
@@ -449,7 +482,6 @@
             renderBoard();
             updateNotation(); 
 
-            // 자동 시작 타이머나 메시지 로딩 중에 글자가 덮어씌워지지 않도록 방어
             if (isWaitingForComputer && document.getElementById('status-msg').innerText.indexOf('다시 시작') === -1 && document.getElementById('status-msg').innerText.indexOf('마스터') === -1 && document.getElementById('status-msg').innerText.indexOf('도달') === -1) {
                 document.getElementById('status-msg').innerText = "컴퓨터가 응수하는 중...";
                 document.getElementById('status-msg').style.color = "#a0d959";
