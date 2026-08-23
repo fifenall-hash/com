@@ -21,7 +21,14 @@
 
         #main-container { display: flex; flex-direction: row; width: 100%; max-width: 900px; margin: 15px auto 10px auto; padding: 0 10px; justify-content: center; align-items: flex-start; }
 
-        #board-wrapper { flex: 0 0 auto; width: 100%; max-width: 600px; position: relative; aspect-ratio: 1/1; background-image: url('images/3dboard.png'); background-size: 100% 100%; }
+        /* [신규] 보드와 잡힌 기물을 하나로 묶어주는 영역 */
+        #board-area { flex: 0 0 auto; width: 100%; max-width: 600px; display: flex; flex-direction: column; }
+        
+        /* [신규] 잡힌 기물 디자인 */
+        .captured-area { height: 32px; display: flex; align-items: flex-end; padding: 0 5px; margin: 2px 0; }
+        .cap-piece { width: 17.6px; height: 32px; background-size: 100% 100%; margin-right: -4px; filter: drop-shadow(1px 1px 1px rgba(0,0,0,0.8)); }
+
+        #board-wrapper { width: 100%; position: relative; aspect-ratio: 1/1; background-image: url('images/3dboard.png'); background-size: 100% 100%; }
         
         .piece, .highlight { position: absolute; background-size: 100% 100%; transition: left 0.15s linear, top 0.15s linear; pointer-events: none; }
         .piece { width: 12.5%; height: 22.7272%; }
@@ -50,7 +57,7 @@
 
         @media (max-width: 768px) {
             #main-container { flex-direction: column; align-items: center; }
-            #board-wrapper { width: 100%; max-width: 100%; }
+            #board-area { width: 100%; max-width: 100%; }
             #notation-wrapper { width: 100%; margin-left: 0; margin-top: 15px; height: 180px; min-height: auto; }
         }
     </style>
@@ -67,10 +74,17 @@
     </div>
 
     <div id="main-container">
-        <div id="board-wrapper">
-            <div id="pieces-container"></div>
-            <div id="highlights-container"></div>
-            <div id="touch-grid"></div>
+        <!-- 보드와 상/하단 기물 표시를 묶은 보드 에어리어 -->
+        <div id="board-area">
+            <div id="top-captured" class="captured-area"></div>
+            
+            <div id="board-wrapper">
+                <div id="pieces-container"></div>
+                <div id="highlights-container"></div>
+                <div id="touch-grid"></div>
+            </div>
+            
+            <div id="bottom-captured" class="captured-area"></div>
         </div>
 
         <div id="notation-wrapper">
@@ -89,7 +103,6 @@
             <input type="checkbox" id="auto-reset" style="vertical-align: middle; width: 16px; height: 16px;"> 자동 리셋
         </label>
         <button onclick="copyPGN()" style="padding: 8px 16px; font-size: 14px; background-color: #27ae60; color: white; text-shadow: none;">📋 PGN 복사</button>
-        <!-- [신규] 기보 감상 버튼 -->
         <button id="replay-btn" onclick="startReplay()" style="display: none; padding: 8px 16px; font-size: 14px; background-color: #f39c12; color: white; text-shadow: none;">🎬 기보 감상</button>
         <button id="install-btn" style="display: none; padding: 8px 16px; font-size: 14px; background-color: #e67e22; color: white; text-shadow: none;">📲 앱 설치</button>
     </div>
@@ -113,7 +126,6 @@
         let globalStartFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let globalPosName = "Starting Position"; 
 
-        // [신규] 기보 감상 및 자동 리셋 타이머 관리를 위한 변수들
         let isReplaying = false;
         let autoResetTimeoutId = null;
         let replayTimeoutId = null;
@@ -162,7 +174,6 @@
             }
         }
 
-        // --- 기보 감상 (Replay) 시스템 ---
         function startReplay() {
             if (autoResetTimeoutId) {
                 clearTimeout(autoResetTimeoutId);
@@ -176,17 +187,15 @@
 
             let moves = fullGame.history();
             
-            // 시각적 효과를 극대화하기 위해 완전한 초기 보드(Standard Start)에서부터 시작합니다.
             game.reset();
             fullGame.reset();
             
             selectedSquare = null;
             lastMove = null;
-            
             let moveIndex = 0;
             
             function playNextMove() {
-                if (!isReplaying) return; // 중간에 연습 버튼을 눌러 인터럽트 된 경우 정지
+                if (!isReplaying) return;
                 
                 if (moveIndex >= moves.length) {
                     isReplaying = false;
@@ -203,12 +212,11 @@
                 playSound(moveObj.captured ? 'capture' : 'move');
                 updateUI();
                 
-                // updateUI가 상태 메시지를 덮어씌우는 것을 방지하고 감상 중 텍스트를 강제 유지
                 document.getElementById('status-msg').innerText = "기보 감상 중... (" + (moveIndex + 1) + "/" + moves.length + ")";
                 document.getElementById('status-msg').style.color = "#f39c12";
                 
                 moveIndex++;
-                replayTimeoutId = setTimeout(playNextMove, 1500); // 1.5초 간격으로 자동 재생
+                replayTimeoutId = setTimeout(playNextMove, 1500); 
             }
             
             updateUI();
@@ -218,16 +226,13 @@
             replayTimeoutId = setTimeout(playNextMove, 1000);
         }
 
-        // --- PWA 앱 설치 로직 ---
         let deferredPrompt;
         const installBtn = document.getElementById('install-btn');
-
         window.addEventListener('beforeinstallprompt', (e) => {
             e.preventDefault(); 
             deferredPrompt = e; 
             installBtn.style.display = 'inline-block'; 
         });
-
         installBtn.addEventListener('click', async () => {
             if (deferredPrompt) {
                 deferredPrompt.prompt(); 
@@ -236,12 +241,10 @@
                 installBtn.style.display = 'none'; 
             }
         });
-
         window.addEventListener('appinstalled', () => {
             deferredPrompt = null;
             installBtn.style.display = 'none';
         });
-        // -----------------------
 
         async function loadData() {
             try {
@@ -310,7 +313,6 @@
         }
 
         function startGame(color) {
-            // 진행 중이던 타이머와 감상 모드를 즉시 리셋
             if (autoResetTimeoutId) { clearTimeout(autoResetTimeoutId); autoResetTimeoutId = null; }
             if (replayTimeoutId) { clearTimeout(replayTimeoutId); replayTimeoutId = null; }
             isReplaying = false;
@@ -343,7 +345,6 @@
         }
 
         function handleSquareClick(sq) {
-            // 기보 감상 모드 중일 때도 터치를 방어합니다.
             if (isWaitingForComputer || game.game_over() || isReplaying) return;
 
             let piece = game.get(sq);
@@ -385,7 +386,7 @@
                             setTimeout(makeComputerMove, 500);
                         } else {
                             isWaitingForComputer = true; 
-                            document.getElementById('replay-btn').style.display = 'inline-block'; // 감상 버튼 등장
+                            document.getElementById('replay-btn').style.display = 'inline-block';
                             updateUI();
                             
                             let isAuto = document.getElementById('auto-reset').checked;
@@ -442,7 +443,7 @@
             let nextFen = getBaseFen(game.fen());
             if (!combinedTree[nextFen] || Object.keys(combinedTree[nextFen]).length === 0) {
                 isWaitingForComputer = true; 
-                document.getElementById('replay-btn').style.display = 'inline-block'; // 감상 버튼 등장
+                document.getElementById('replay-btn').style.display = 'inline-block';
                 updateUI();
                 
                 let isAuto = document.getElementById('auto-reset').checked;
@@ -466,6 +467,65 @@
                 if (type === 'capture') { sndCapture.currentTime = 0; sndCapture.play(); }
                 else { sndMove.currentTime = 0; sndMove.play(); }
             } catch(e) {}
+        }
+
+        // [신규] 잡힌 기물 및 점수(Advantage) 계산 및 렌더링
+        function renderCapturedPieces() {
+            let capByWhite = []; 
+            let capByBlack = []; 
+            
+            let history = fullGame.history({ verbose: true });
+            for (let m of history) {
+                if (m.captured) {
+                    if (m.color === 'w') capByWhite.push(m.captured);
+                    else capByBlack.push(m.captured);
+                }
+            }
+            
+            const order = { 'q': 1, 'r': 2, 'b': 3, 'n': 4, 'p': 5 };
+            capByWhite.sort((a, b) => order[a] - order[b]);
+            capByBlack.sort((a, b) => order[a] - order[b]);
+
+            const val = { 'q': 9, 'r': 5, 'b': 3, 'n': 3, 'p': 1 };
+            let scoreW = capByWhite.reduce((sum, p) => sum + val[p], 0);
+            let scoreB = capByBlack.reduce((sum, p) => sum + val[p], 0);
+            let diff = scoreW - scoreB;
+
+            let topCaps, topIsCapByWhite;
+            let bottomCaps, bottomIsCapByWhite;
+
+            if (isFlipped) { 
+                topCaps = capByWhite;
+                topIsCapByWhite = true;
+                bottomCaps = capByBlack;
+                bottomIsCapByWhite = false;
+            } else { 
+                topCaps = capByBlack;
+                topIsCapByWhite = false;
+                bottomCaps = capByWhite;
+                bottomIsCapByWhite = true;
+            }
+
+            function getCapHTML(caps, isCapByWhite) {
+                let c = isCapByWhite ? 'b' : 'w';
+                let html = '';
+                for (let sym of caps) {
+                    let imgName = `3d${c}${sym}.png`;
+                    if (isFlipped && sym === 'n') {
+                        imgName = `3d${c}nr.png`;
+                    }
+                    html += `<div class="cap-piece" style="background-image: url('images/${imgName}');"></div>`;
+                }
+                
+                let scoreHTML = '';
+                if (isCapByWhite && diff > 0) scoreHTML = `<span style="color:#dcdcdc; font-size:13px; font-weight:bold; margin-left:12px; margin-bottom:6px;">+${diff}</span>`;
+                if (!isCapByWhite && diff < 0) scoreHTML = `<span style="color:#dcdcdc; font-size:13px; font-weight:bold; margin-left:12px; margin-bottom:6px;">+${-diff}</span>`;
+                
+                return html + scoreHTML;
+            }
+
+            document.getElementById('top-captured').innerHTML = getCapHTML(topCaps, topIsCapByWhite);
+            document.getElementById('bottom-captured').innerHTML = getCapHTML(bottomCaps, bottomIsCapByWhite);
         }
 
         function renderBoard() {
@@ -512,6 +572,9 @@
 
             pCont.innerHTML = boardHtml;
             hCont.innerHTML = hlHtml;
+            
+            // 보드가 그려질 때 잡힌 기물도 같이 렌더링
+            renderCapturedPieces();
         }
 
         function getHighlightHTML(sq, color) {
