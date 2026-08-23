@@ -21,10 +21,8 @@
 
         #main-container { display: flex; flex-direction: row; width: 100%; max-width: 900px; margin: 15px auto 10px auto; padding: 0 10px; justify-content: center; align-items: flex-start; }
 
-        /* [신규] 보드와 잡힌 기물을 하나로 묶어주는 영역 */
         #board-area { flex: 0 0 auto; width: 100%; max-width: 600px; display: flex; flex-direction: column; }
         
-        /* [신규] 잡힌 기물 디자인 */
         .captured-area { height: 32px; display: flex; align-items: flex-end; padding: 0 5px; margin: 2px 0; }
         .cap-piece { width: 17.6px; height: 32px; background-size: 100% 100%; margin-right: -4px; filter: drop-shadow(1px 1px 1px rgba(0,0,0,0.8)); }
 
@@ -74,7 +72,6 @@
     </div>
 
     <div id="main-container">
-        <!-- 보드와 상/하단 기물 표시를 묶은 보드 에어리어 -->
         <div id="board-area">
             <div id="top-captured" class="captured-area"></div>
             
@@ -179,8 +176,13 @@
                 clearTimeout(autoResetTimeoutId);
                 autoResetTimeoutId = null;
             }
+            if (replayTimeoutId) {
+                clearTimeout(replayTimeoutId);
+                replayTimeoutId = null;
+            }
             
             isReplaying = true;
+            // 감상 진행 중 중복 터치를 막기 위해 잠깐 숨김
             document.getElementById('replay-btn').style.display = 'none';
             document.getElementById('status-msg').innerText = "기보 감상 중...";
             document.getElementById('status-msg').style.color = "#f39c12";
@@ -201,6 +203,9 @@
                     isReplaying = false;
                     document.getElementById('status-msg').innerText = "기보 감상이 끝났습니다. 연습 버튼을 눌러 다시 시작하세요.";
                     document.getElementById('status-msg').style.color = "#3498db";
+                    
+                    // [핵심] 재생이 완전히 끝나면 다시 버튼을 표시해 줍니다.
+                    document.getElementById('replay-btn').style.display = 'inline-block';
                     return;
                 }
                 
@@ -469,7 +474,6 @@
             } catch(e) {}
         }
 
-        // [신규] 잡힌 기물 및 점수(Advantage) 계산 및 렌더링
         function renderCapturedPieces() {
             let capByWhite = []; 
             let capByBlack = []; 
@@ -573,7 +577,6 @@
             pCont.innerHTML = boardHtml;
             hCont.innerHTML = hlHtml;
             
-            // 보드가 그려질 때 잡힌 기물도 같이 렌더링
             renderCapturedPieces();
         }
 
