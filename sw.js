@@ -1,7 +1,16 @@
-// 빈 서비스 워커 (설치 조건 충족용)
+const CACHE_NAME = 'chess-quiz-v1';
+
 self.addEventListener('install', (e) => {
     self.skipWaiting();
 });
+
+self.addEventListener('activate', (e) => {
+    return self.clients.claim();
+});
+
 self.addEventListener('fetch', (e) => {
-    // 오프라인 캐싱은 하지 않고 네트워크 요청 통과
+    // 앱 설치 조건(Fetch 핸들러) 통과를 위한 코드
+    e.respondWith(
+        fetch(e.request).catch(() => new Response("오프라인 상태입니다."))
+    );
 });
