@@ -43,6 +43,9 @@
         .move-w { flex: 1; color: #7f8c8d; font-weight: bold; }
         .move-b { flex: 1; color: #7f8c8d; font-weight: bold; }
         
+        /* [신규] 평가치 디자인 */
+        .eval-badge { font-size: 12px; color: #95a5a6; margin-left: 5px; font-weight: normal; }
+        
         #controls { width: 100%; text-align: center; padding: 10px 10px 5px 10px; }
         button { background-color: #8c8c8c; color: #ffd700; text-shadow: 1px 1px 2px rgba(0,0,0,0.6); border: none; padding: 14px 24px; font-size: 16px; border-radius: 8px; font-weight: bold; cursor: pointer; margin: 0 5px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         button:active { background-color: #737373; transform: translateY(2px); box-shadow: 0 2px 3px rgba(0,0,0,0.3); }
@@ -123,6 +126,9 @@
         let globalStartFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let globalPosName = "Starting Position"; 
 
+        // [신규] 전체 게임의 평가치를 담는 배열
+        let fullGameEvals = [];
+
         let isReplaying = false;
         let autoResetTimeoutId = null;
         let replayTimeoutId = null;
@@ -135,13 +141,24 @@
             return fen.split(' ').slice(0, 3).join(' ');
         }
 
+        // [수정] 시작 국면을 재현할 때 평가치도 함께 추출하여 fullGameEvals에 세팅합니다.
         function syncFullGame() {
             fullGame.reset();
+            fullGameEvals = [];
             if (globalPosName && globalPosName !== "Starting Position") {
                 let tokens = globalPosName.split(/\s+/);
+                let tempGame = new Chess();
                 for (let t of tokens) {
                     let san = t.replace(/^\d+\.+/, ""); 
                     if (san) {
+                        let fenBefore = getBaseFen(tempGame.fen());
+                        let ev = "";
+                        if (combinedTree[fenBefore] && combinedTree[fenBefore][san] !== undefined) {
+                            ev = combinedTree[fenBefore][san];
+                        }
+                        fullGameEvals.push(ev);
+                        
+                        tempGame.move(san);
                         try { fullGame.move(san); } catch(e) {}
                     }
                 }
@@ -182,15 +199,16 @@
             }
             
             isReplaying = true;
-            // 감상 진행 중 중복 터치를 막기 위해 잠깐 숨김
             document.getElementById('replay-btn').style.display = 'none';
             document.getElementById('status-msg').innerText = "기보 감상 중...";
             document.getElementById('status-msg').style.color = "#f39c12";
 
             let moves = fullGame.history();
+            let savedEvals = [...fullGameEvals]; // 평가치 백업
             
             game.reset();
             fullGame.reset();
+            fullGameEvals = []; // 다시 쌓기 위해 비움
             
             selectedSquare = null;
             lastMove = null;
@@ -204,7 +222,6 @@
                     document.getElementById('status-msg').innerText = "기보 감상이 끝났습니다. 연습 버튼을 눌러 다시 시작하세요.";
                     document.getElementById('status-msg').style.color = "#3498db";
                     
-                    // [핵심] 재생이 완전히 끝나면 다시 버튼을 표시해 줍니다.
                     document.getElementById('replay-btn').style.display = 'inline-block';
                     return;
                 }
@@ -212,6 +229,10 @@
                 let san = moves[moveIndex];
                 let moveObj = game.move(san);
                 fullGame.move(san);
+                
+                // [신규] 감상 모드 중에도 백업해둔 평가치를 한 수씩 복원
+                fullGameEvals.push(savedEvals[moveIndex]);
+                
                 lastMove = moveObj;
                 
                 playSound(moveObj.captured ? 'capture' : 'move');
@@ -278,7 +299,15 @@
                         let baseFen = getBaseFen(fen);
                         if (!combinedTree[baseFen]) combinedTree[baseFen] = {};
                         for (let san in fens[fen]) {
-                            combinedTree[baseFen][san] = true;
+                            // [수정] 평가치 추출 로직: 객체, 문자열, 숫자를 모두 캐치하여 저장
+                            let rawVal = fens[fen][san];
+                            let ev = "";
+                            if (typeof rawVal === 'object' && rawVal !== null && rawVal.eval !== undefined) {
+                                ev = String(rawVal.eval);
+                            } else if (rawVal !== true && rawVal !== null && typeof rawVal !== 'object') {
+                                ev = String(rawVal);
+                            }
+                            combinedTree[baseFen][san] = ev;
                         }
                     }
                 }
@@ -374,9 +403,12 @@
                     let fenBefore = getBaseFen(game.fen());
                     let sanMove = moveObj.san;
 
-                    if (combinedTree[fenBefore] && combinedTree[fenBefore][sanMove]) {
+                    if (combinedTree[fenBefore] && combinedTree[fenBefore][sanMove] !== undefined) {
+                        let ev = combinedTree[fenBefore][sanMove]; // 평가치 추출
+                        
                         game.move(moveObj);
                         fullGame.move(sanMove); 
+                        fullGameEvals.push(ev); // 평가치 배열에 저장
                         
                         lastMove = moveObj;
                         selectedSquare = null;
@@ -437,8 +469,11 @@
             }
 
             let randomSan = possibleSans[Math.floor(Math.random() * possibleSans.length)];
+            let ev = combinedTree[currentFen][randomSan]; // 평가치 추출
+            
             let moveObj = game.move(randomSan);
             fullGame.move(randomSan); 
+            fullGameEvals.push(ev); // 평가치 배열에 저장
 
             lastMove = moveObj;
             playSound(moveObj.captured ? 'capture' : 'move');
@@ -593,17 +628,23 @@
             return `<div class="highlight" style="left: ${leftPct}%; top: ${topPct}%; background-color: ${color};"></div>`;
         }
 
+        // [수정] 평가치를 기보에 함께 그리는 로직 적용
         function updateNotation() {
             let history = fullGame.history();
             let html = '';
             for (let i = 0; i < history.length; i += 2) {
                 let num = (i / 2) + 1;
+                
                 let wMove = history[i];
+                let wEval = fullGameEvals[i] ? `<span class="eval-badge">[${fullGameEvals[i]}]</span>` : '';
+                
                 let bMove = history[i + 1] ? history[i + 1] : '';
+                let bEval = (history[i + 1] && fullGameEvals[i + 1]) ? `<span class="eval-badge">[${fullGameEvals[i + 1]}]</span>` : '';
+                
                 html += `<div class="move-row">
                     <div class="move-num">${num}.</div>
-                    <div class="move-w">${wMove}</div>
-                    <div class="move-b">${bMove}</div>
+                    <div class="move-w">${wMove}${wEval}</div>
+                    <div class="move-b">${bMove}${bEval}</div>
                 </div>`;
             }
             const body = document.getElementById('notation-body');
